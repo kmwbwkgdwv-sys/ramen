@@ -44,7 +44,7 @@ function initialFixtures(st) {
   //   左の壁に大型冷蔵庫、そのとなりの島に まな板（切った物をすぐバットや冷蔵庫へ運べる）と作業台、奥の壁ぎわに洗い場（シンク＋水切りかご）・生ゴミ箱、右の壁にパソコン
   add('topping', -4.45, -3.72, 2); add('pot', -2.95, -3.68, 2); add('boiler', -1.65, -3.68, 2); add('worktable', 0.15, -3.73, 2); add('dishrack', 1.75, -3.83, 2);
   add('fridge2', -5.45, -6.3, 1); add('worktable', -2.4, -7.2);
-  add('board', -3.6, -6.0, 0); add('sink', -0.75, BACK_Z + 0.35); add('trash', 0.75, BACK_Z + 0.3);
+  add('board', -3.6, -6.0, 0); add('sink', -0.75, BACK_Z + 0.35); add('trash', 0.75, BACK_Z + 0.42);
   add('pc', 5.6, -7.6, 3);
   add('pass', 3.4, -3.5); add('ext', -5.75, -9.0);
   // 客席：入口の右に券売機とレジ、左にテーブル席
@@ -129,6 +129,7 @@ export function normalizeStore(st) {
     if (d.slots) { f.sl = (f.sl || []).slice(0, d.slots).map((x) => slotClean(x)); while (f.sl.length < d.slots) f.sl.push(null); }
     if (d.seats) { f.dd = (f.dd || []).slice(0, d.seats.length).map((a) => (Array.isArray(a) ? a.filter((x) => DISHES[x]) : [])); while (f.dd.length < d.seats.length) f.dd.push([]); }
   }
+  for (const f of st.fixtures) nudgeOffWall(st, f);
   // レジがなければ券売機のそばに置く
   if (!st.fixtures.some((f) => f.t === 'register')) { const tk = st.fixtures.find((f) => f.t === 'ticket'); const fp = fitPlacement(st, 'register', (tk?.x ?? 2.2) + 1.3, tk?.z ?? 5.4, 2); st.fixtures.push({ id: st.nid++, t: 'register', x: fp.x, z: fp.z, r: 2 }); }
   // 厨房を広げた版：前の厨房の奥半分にあった設備を、新しい奥の壁ぎわへ動かす
@@ -1215,7 +1216,7 @@ export class Sim {
     const r = a.r & 3, ok = this.canPlaceFixture(c.ft, a.x, a.z, r, null);
     if (ok !== true) return this.err(uid, ok);
     const f = { id: st.nid++, t: c.ft, x: a.x, z: a.z, r, ...(c.st && staffEq(c.ft) ? { st: 1 } : {}) }; initState(f);
-    st.fixtures.push(f); st.crates = st.crates.filter((o) => o !== c);
+    st.fixtures.push(f); st.crates = st.crates.filter((o) => o !== c); nudgeOffWall(st, f);
     this.rebuildNav();
     this.toast(uid, `🔨 ${FIXTURES[c.ft].icon} ${FIXTURES[c.ft].name}を置きました！`, 'ok');
     this.sfx('build', a.x, a.z); this.bump();
@@ -1244,7 +1245,7 @@ export class Sim {
     const busy = this.busyFixture(f); if (busy) return this.err(uid, busy);
     const r = a.r & 3, ok = this.canPlaceFixture(f.t, a.x, a.z, r, f.id);
     if (ok !== true) return this.err(uid, ok);
-    f.x = a.x; f.z = a.z; f.r = r;
+    f.x = a.x; f.z = a.z; f.r = r; nudgeOffWall(st0(this), f);
     this.rebuildNav(); this.sfx('build', a.x, a.z); this.bump();
   }
   a_sell(uid, a) {
@@ -2663,3 +2664,15 @@ function estimateOpProfit(st) {
 export function crateItems(st) { const out = []; for (const c of st.crates || []) if (c.kind === 'food') for (const [k, n] of c.items) if (!INGREDIENTS[k]?.dish) out.push([k, n]); return out; }
 // 手に持つ物の見た目のキー（投げた物・床の物の絵）
 export function itemKey(x) { return !x ? '' : x.t === 'pack' ? 'p:' + x.k : x.t === 'ing' ? 'i:' + x.k + ':' + Math.min(x.n, 6) : x.t === 'top' ? 't:' + x.k : x.t === 'keep' ? 'k:' + x.b : x.t; }
+
+const st0 = (sim) => sim.store;
+// 丸いゴミ箱は壁の腰板にめりこむと面がちらつくので、壁から少し離す（置けなくなる場合はそのまま）
+export function nudgeOffWall(st, f) {
+  if (f.t !== 'trash') return;
+  const GAP = 0.25, x0 = f.x, z0 = f.z;
+  for (const w of getWalls(st)) {
+    if (w.axis === 'x' && f.x > w.minX - 0.2 && f.x < w.maxX + 0.2) { if (f.z >= w.maxZ - 0.05 && f.z - w.maxZ < GAP) f.z = w.maxZ + GAP; else if (f.z <= w.minZ + 0.05 && w.minZ - f.z < GAP) f.z = w.minZ - GAP; }
+    if (w.axis === 'z' && f.z > w.minZ - 0.2 && f.z < w.maxZ + 0.2) { if (f.x >= w.maxX - 0.05 && f.x - w.maxX < GAP) f.x = w.maxX + GAP; else if (f.x <= w.minX + 0.05 && w.minX - f.x < GAP) f.x = w.minX - GAP; }
+  }
+  if ((f.x !== x0 || f.z !== z0) && Sim.prototype.canPlaceFixture.call({ store: st }, f.t, f.x, f.z, f.r, f.id) !== true) { f.x = x0; f.z = z0; }
+}

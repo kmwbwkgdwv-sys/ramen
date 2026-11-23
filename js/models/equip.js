@@ -101,7 +101,7 @@ function knob(g, x, y, z, { r = 0.028, c = 0x1c1d20, ring = true } = {}) {
   add(g, T(box(r * 0.35, r * 1.6, 0.01), x, y - r * 0.8, z + 0.017), C(c, { r: 0.35 }));
 }
 // ステンレスのボウル（lathe）
-function bowl(r, h) { return lathe([[0, 0], [r * 0.45, 0], [r * 0.8, h * 0.25], [r * 0.98, h * 0.75], [r, h], [r * 1.04, h], [r * 1.04, h * 1.04], [r * 0.97, h * 1.02], [r * 0.95, h * 0.78], [r * 0.77, h * 0.3], [r * 0.43, h * 0.05], [0, h * 0.05]], 22); }
+function bowl(r, h) { return T(lathe([[0, 0], [r * 0.45, 0], [r * 0.8, h * 0.25], [r * 0.98, h * 0.75], [r, h], [r * 1.04, h], [r * 1.04, h * 1.04], [r * 0.97, h * 1.02], [r * 0.95, h * 0.78], [r * 0.77, h * 0.3], [r * 0.43, h * 0.05], [0, h * 0.05]], 22), 0, 0.0015); }
 // 網のかご（針金）。中心が原点、底が y=0
 function wireBasket(g, w, d, h, x, y, z, m = CHROME) {
   const r = 0.0035, P = (a, b) => add(g, rod(a, b, r, 4), m());
@@ -228,7 +228,7 @@ export function stoveModel(def, A, opts = {}) {
   // 五徳（鍋をのせる鋳物の輪と爪）
   const R5 = Math.min(W, D) / 2 - 0.08, y5 = A.y - 0.05;
   add(g, T(torus(R5, 0.014, 6, 32), 0, y5 - 0.02, 0, Math.PI / 2), IRON());
-  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + 0.26, rm = (0.14 + R5) / 2; add(g, T(box(R5 - 0.12, 0.03, 0.022), Math.cos(a) * rm, y5 - 0.03, Math.sin(a) * rm, 0, -a, 0), IRON()); }
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + 0.26, rm = (0.14 + R5) / 2; add(g, T(box(R5 - 0.12, 0.028, 0.022), Math.cos(a) * rm, y5 - 0.03, Math.sin(a) * rm, 0, -a, 0), IRON()); }
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { const a = Math.atan2(sz * (D / 2 - 0.03), sx * (W / 2 - 0.03)); add(g, rod([Math.cos(a) * R5, y5 - 0.02, Math.sin(a) * R5], [sx * (W / 2 - 0.035), TY, sz * (D / 2 - 0.035)], 0.012, 6), IRON()); }
   // ガス管・コック・ホース
   const pz = D / 2 - 0.075, py = 0.27, brass = C(0xc9a227, { r: 0.35, m: 0.8 });
@@ -436,7 +436,7 @@ export function dishrackModel() {
   // 一番上：割り箸の箱とキッチンペーパー
   add(g, T(rbox(0.42, 0.2, 0.3, 0.01), -0.28, top, 0), C(0xc9a26b, { r: 0.85 }));
   label(g, '割り箸', 0.2, 0.07, -0.28, top + 0.1, 0.151, { bg: '#c9a26b', fg: '#5a3a1a' });
-  for (const x of [0.2, 0.36]) { add(g, T(cyl(0.06, 0.06, 0.22, 16), x, top + 0.06, 0, 0, 0, Math.PI / 2), C(0xfbfbf7, { r: 0.9 })); }
+  for (const x of [0.2, 0.36]) { add(g, T(cyl(0.06, 0.06, 0.15, 16), x + 0.075, top + 0.06, 0, 0, 0, Math.PI / 2), C(0xfbfbf7, { r: 0.9 })); }
   return g;
 }
 
@@ -496,7 +496,7 @@ export function riceModel() {
   label(g, '米', 0.12, 0.1, -0.02, 0.235, 0.136, { bg: '#f1ead8', fg: '#1f5a2a', rx: -0.0 });
   // ジャー本体（中の内釜が見える）
   const H = RY - TOP;
-  add(g, T(lathe([[0, 0], [R - 0.02, 0], [R, 0.02], [R + 0.006, 0.06], [R + 0.006, H - 0.05], [R - 0.008, H - 0.01], [R - 0.04, H], [0.152, H], [0.15, H - 0.01], [0.15, H - 0.2], [0, H - 0.2]], 32), 0, TOP), C(0xf6f6f2, { r: 0.35 }));
+  add(g, T(lathe([[0, 0], [R - 0.02, 0], [R, 0.02], [R + 0.006, 0.06], [R + 0.006, H - 0.05], [R - 0.008, H - 0.01], [R - 0.04, H], [0.152, H], [0.15, H - 0.01], [0.15, H - 0.2], [0, H - 0.2]], 32), 0, TOP + 0.002), C(0xf6f6f2, { r: 0.35 }));
   add(g, T(torus(R + 0.004, 0.008, 6, 32), 0, TOP + 0.03, 0, Math.PI / 2), C(0x8c939a, { r: 0.3, m: 0.7 }));
   add(g, T(cyl(0.15, 0.135, 0.16, 28, true), 0, RY - 0.17), mat(0x4a4d52, { r: 0.35, m: 0.5, side: THREE.DoubleSide }));
   add(g, T(torus(0.152, 0.006, 6, 28), 0, RY - 0.004, 0, Math.PI / 2), C(0xb9bfc5, { r: 0.3, m: 0.8 }));
@@ -590,7 +590,7 @@ export function beerModel() {
   add(g, T(rbox(0.62, 0.04, 0.62, 0.01), 0, BY - 0.04), C(0x3a2a1e, { r: 0.45 }));
   // ビール樽
   const kx = -0.07, kr = 0.15, kh = 0.46, keg = C(0xd4d8dc, { r: 0.25, m: 0.85 });
-  add(g, T(lathe([[0, 0], [kr - 0.02, 0], [kr, 0.03], [kr, kh - 0.03], [kr - 0.02, kh], [0.03, kh], [0, kh]], 28), kx, 0.07, 0.02), keg);
+  add(g, T(lathe([[0, 0], [kr - 0.02, 0], [kr, 0.03], [kr, kh - 0.03], [kr - 0.02, kh], [0.03, kh], [0, kh]], 28), kx, 0.072, 0.02), keg);
   for (const y of [0.13, kh - 0.05]) add(g, T(torus(kr + 0.004, 0.01, 6, 28), kx, 0.07 + y, 0.02, Math.PI / 2), keg);
   add(g, T(torus(kr - 0.03, 0.012, 6, 24), kx, 0.07 + kh + 0.01, 0.02, Math.PI / 2), keg);
   add(g, T(cyl(0.035, 0.035, 0.05, 14), kx, 0.07 + kh, 0.02), C(0x1c1d20, { r: 0.4 }));
@@ -753,15 +753,20 @@ export function waterModel() {
 }
 // ペダル式のゴミ箱
 export function trashModel() {
-  const g = new THREE.Group(), R = 0.18, H = 0.6, st = smat(surf('metal'), 0xd8dde1, { r: 0.28, m: 0.8 });
+  // 足ペダル式のふた付きゴミ箱。ふた・ふちの帯・ラベルは本体の面から少し離して、面が重なってちらつかないようにする
+  const g = new THREE.Group(), R = 0.17, H = 0.6, st = smat(surf('metal'), 0xd8dde1, { r: 0.28, m: 0.8 });
+  const rAt = (y) => R - 0.01 * (1 - (y - 0.04) / (H - 0.04)); // 本体は下が少し細い
   add(g, T(cyl(R + 0.01, R + 0.01, 0.04, 24), 0, 0), RUBBER());
-  add(g, T(cyl(R, R - 0.01, H - 0.04, 28), 0, 0.04), st);
-  add(g, T(torus(R + 0.002, 0.008, 6, 28), 0, H - 0.005, 0, Math.PI / 2), C(0x2a4a36, { r: 0.4 }));
-  add(g, T(lathe([[0, 0.05], [0.1, 0.045], [0.16, 0.025], [R + 0.005, 0.008], [R + 0.008, 0], [0, 0]], 28), 0, H), C(0x3b6e4f, { r: 0.4, m: 0.2 }));
-  add(g, T(box(0.08, 0.03, 0.04), 0, H, -R + 0.01), C(0x2a4a36, { r: 0.4 }));
-  add(g, T(rbox(0.12, 0.02, 0.08, 0.008), 0, 0.03, R + 0.04), C(0x2a4a36, { r: 0.4 }));
-  add(g, T(box(0.05, 0.03, 0.04), 0, 0.03, R + 0.0), C(0x2a4a36, { r: 0.4 }));
-  const lb = M(plane(0.2, 0.12), basic(signTexture('生ゴミ', { w: 256, h: 150, bg: '#ffffff', fg: '#2a4a36', radius: 16 })), false); lb.position.set(0, 0.36, R + 0.002); g.add(lb);
+  add(g, T(cyl(R, R - 0.01, H - 0.046, 28), 0, 0.04), st);
+  add(g, T(cyl(R + 0.006, R + 0.006, 0.022, 28, true), 0, H - 0.03), C(0x2a4a36, { r: 0.4, side: THREE.DoubleSide })); // ふちの帯（本体より6mm外）
+  add(g, T(lathe([[0, 0.05], [0.1, 0.045], [0.15, 0.026], [R + 0.004, 0.012], [R + 0.012, 0.004], [R + 0.012, 0], [0, 0]], 28), 0, H + 0.004), C(0x3b6e4f, { r: 0.4, m: 0.2 }));
+  add(g, T(box(0.08, 0.026, 0.035), 0, H + 0.012, -R + 0.002), C(0x2a4a36, { r: 0.4 }));
+  add(g, T(rbox(0.12, 0.02, 0.08, 0.008), 0, 0.03, R + 0.05), C(0x2a4a36, { r: 0.4 }));
+  add(g, T(box(0.05, 0.026, 0.05), 0, 0.034, R + 0.004), C(0x2a4a36, { r: 0.4 }));
+  // ラベル：本体の曲面にそって3mm浮かせた帯に貼る
+  const tl = 0.2 / R, y0 = 0.3, y1 = 0.42;
+  const lb = M(T(new THREE.CylinderGeometry(rAt(y1) + 0.003, rAt(y0) + 0.003, y1 - y0, 12, 1, true, -tl / 2, tl), 0, (y0 + y1) / 2), basic(signTexture('生ゴミ', { w: 256, h: 150, bg: '#ffffff', fg: '#2a4a36', radius: 16 })), false);
+  g.add(lb);
   return g;
 }
 // 券売機（光る看板・ボタン面・お札とコインの投入口・おつりと食券の取り出し口）

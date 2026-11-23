@@ -228,7 +228,7 @@ const BUILD = {
     add(g, T(cyl(0.66, 0.66, 0.01, 28), 0, 0.35), C(0x234a2a, { r: 0.9 }));
     const bowl = new THREE.Group();
     add(bowl, lathe([[0, 0], [0.07, 0], [0.16, 0.08], [0.2, 0.14]], 22), mat(0xffffff, { r: 0.25, side: THREE.DoubleSide }));
-    bowl.position.y = 0.36; g.add(bowl);
+    bowl.position.y = 0.362; g.add(bowl);
     for (const [x, z] of [[0, 0.95], [0, -0.95], [0.95, 0], [-0.95, 0]]) add(g, T(rbox(0.4, 0.06, 0.4, 0.02), x, 0, z), C(0x7a1f1f, { r: 0.85 }));
     return g;
   },
