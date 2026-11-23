@@ -174,7 +174,26 @@ export class Game {
     if (st.rev === this.colRev) return;
     this.colRev = st.rev;
     this.rects = [...getWalls(st), ...this.R.world.obstacles];
-    for (const f of st.fixtures) { if (FIXTURES[f.t]?.air) continue; const fp = fixtureFootprint(f.t, f.x, f.z, f.r); this.rects.push({ minX: fp.minX + 0.04, maxX: fp.maxX - 0.04, minZ: fp.minZ + 0.04, maxZ: fp.maxZ - 0.04, fx: true }); }
+    for (const f of st.fixtures) { if (FIXTURES[f.t]?.air) continue; const fp = fixtureFootprint(f.t, f.x, f.z, f.r); this.rects.push({ minX: fp.minX + 0.04, maxX: fp.maxX - 0.04, minZ: fp.minZ + 0.04, maxZ: fp.maxZ - 0.04, fx: true, f }); }
+  }
+  // (px,pz) の高さ y の所に設備・壁があるか（設備は場所ごとの高さで判定）
+  _solidAt(px, pz, y) {
+    for (const b of this.rects || []) {
+      const pad = b.f ? 0.08 : 0.03;
+      if (px < b.minX - pad || px > b.maxX + pad || pz < b.minZ - pad || pz > b.maxZ + pad) continue;
+      if (!b.f) { if (y < 4.3) return true; continue; }
+      const H = this.R.fixHeightMap?.(b.f.t);
+      if (!H) { if (y < 1.0) return true; continue; }
+      const [lx, lz] = worldToLocal(b.f, px, pz), i = clamp(Math.floor((lx + H.w / 2) / H.C), 0, H.nx - 1), j = clamp(Math.floor((lz + H.d / 2) / H.C), 0, H.nz - 1);
+      if (H.hs[j * H.nx + i] + 0.02 > y) return true;
+    }
+    return false;
+  }
+  // 向いている方向に、高さ y の物がさえぎられずに出せる距離
+  _ahead(x, z, yaw, y, maxD) {
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    for (let k = 0.05; k <= maxD + 1e-6; k += 0.05) if (this._solidAt(x + fx * k, z + fz * k, y)) return k;
+    return maxD;
   }
   _move(dx, dz) {
     const p = this.pc, r = 0.26;
@@ -210,7 +229,7 @@ export class Game {
     const dirx = -fx * Math.cos(p.pitch), diry = Math.sin(p.pitch), dirz = -fz * Math.cos(p.pitch);
     for (let k = 0.3; k <= d; k += 0.1) {
       const x = tx + dirx * k, y = ty + diry * k, z = tz + dirz * k;
-      if ((this.inside && y > CEIL - 0.1) || this.rects.some((b) => !b.fx && x > b.minX - 0.15 && x < b.maxX + 0.15 && z > b.minZ - 0.15 && z < b.maxZ + 0.15 && y < 4.3)) { d = Math.max(0.4, k - 0.15); break; }
+      if ((this.inside && y > CEIL - 0.1) || this.rects.some((b) => !b.fx && x > b.minX - 0.15 && x < b.maxX + 0.15 && z > b.minZ - 0.15 && z < b.maxZ + 0.15 && y < 4.3) || this._solidAt(x, z, y - 0.15)) { d = Math.max(0.4, k - 0.15); break; }
     }
     this._cd = this._cd == null ? d : Math.min(d, this._cd + dt * 4); d = this._cd;
     cam.position.set(tx + dirx * d, ty + diry * d, tz + dirz * d);
@@ -906,9 +925,11 @@ export class Game {
     }
     if (d.th) list.push({ key: 'thief:' + d.th[6], kind: 'thief', av: THIEF_AV, x: d.th[0], z: d.th[1], ry: d.th[2], an: d.th[3], bubble: d.th[4] || null, small: true });
     // 賭場の壺振りと胴元
-    list.push({ key: 'npc:dealer', kind: 'npc', av: DEALER_AV, x: 13, z: -0.75, ry: 0, an: d.ch?.ph === 'roll' ? 'stir' : 'sit', y: 0.05, small: true });
-    if (st.level >= GAMBLES.chinchiro.lv) list.push({ key: 'npc:oya', kind: 'npc', av: { ...DEALER_AV, hat: 'none', acc: 'sun' }, x: 10.6, z: -2.65, ry: 0, an: 'sit', y: 0.05, small: true });
+    list.push({ key: 'npc:dealer', kind: 'npc', av: DEALER_AV, x: 13, z: -0.75, ry: 0, an: d.ch?.ph === 'roll' ? 'zstir' : 'zsit', y: 0.05, small: true });
+    if (st.level >= GAMBLES.chinchiro.lv) list.push({ key: 'npc:oya', kind: 'npc', av: { ...DEALER_AV, hat: 'none', acc: 'sun' }, x: 10.6, z: -2.65, ry: 0, an: 'zsit', y: 0.05, small: true });
     for (const e of list) if (e.seedAv) e.av = this.app.avatarFromSeed(e.av, e.kind);
+    // 持っている料理・食器が設備や壁にめりこまないよう、前がつまっていたら体に引き寄せる
+    for (const e of list) if (e.hand && e.hand.t !== 'ext' && e.hand.t !== 'shuri') { const free = this._ahead(e.x, e.z, e.ry || 0, (e.y || 0) + 0.9, 0.56); e.hz = clamp(free - 0.18, 0.14, 0.34); }
     for (const k of Object.keys(this.chat)) { this.chat[k].t -= dt; if (this.chat[k].t <= 0) delete this.chat[k]; }
     R.syncChars(list, dt);
     const holders = (who) => R.getChar(who === this.me ? 'me' : 'p:' + who);

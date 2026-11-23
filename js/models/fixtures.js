@@ -5,12 +5,8 @@ import { FIXTURES, TOPPINGS, SOUPS, basketPos, passPos } from '../data.js';
 import { tex, surf, signTexture, canvasTex, emoji, FONT, rr, shade } from '../textures.js';
 import { mat, smat, glassMat, T, box, rbox, cyl, sph, lathe, plane, torus, cone, add, M, vcolor } from './geo.js';
 
-const basicCache = new Map();
-export function basic(map, o = {}) {
-  const k = map.uuid + JSON.stringify(o);
-  if (!basicCache.has(k)) basicCache.set(k, new THREE.MeshBasicMaterial({ map, transparent: !!o.t, side: o.side ?? THREE.FrontSide, toneMapped: false, depthWrite: o.dw ?? true }));
-  return basicCache.get(k);
-}
+import { ANCHOR, basic, sinkModel, stoveModel, boilerModel, toppingModel, boardModel, fridgeModel, dishrackModel, passModel, riceModel, gyozaModel, fryerModel, beerModel, tableModel, counterModel, benchModel, waterModel, trashModel, ticketModel, registerModel, plantModel, zashikiModel, kamidanaModel } from './equip.js';
+export { ANCHOR, basic };
 const C = (c, o = {}) => mat(c, { r: 0.55, ...o });
 const STEEL = () => smat(surf('metal'), 0xe8ebee, { r: 0.3, m: 0.75 });
 const DARK = () => C(0x2f3337, { r: 0.45, m: 0.4 });
@@ -40,174 +36,34 @@ function steelTable(g, w, d, h = 0.9, legs = true) {
     add(g, T(box(w - 0.1, 0.02, d - 0.1), 0, 0.18), STEEL());
   } else add(g, box(w, h - 0.04, d), STEEL());
 }
-// 取り付け位置（描画で中身を置く所）
-export const ANCHOR = {
-  pot: { y: 0.5, r: 0.27, h: 0.42 }, pot2: { y: 0.5, r: 0.33, h: 0.48 },
-  boilerY: 0.9,
-  panY: 0.93, pans: (w) => { const out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; },
-  rack: { ys: [0.12, 0.6, 1.08], xs: [-0.42, -0.14, 0.14, 0.42] },
-  sink: [0.25, 0.72, 0], dryRack: [-0.38, 0.895, -0.04], tareMix: [0.5, 0.9, 0.26], tarePots: [-0.3, 0.9, 0.28], passY: 1.06, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
-};
 const BUILD = {
   // ---------- 厨房 ----------
-  pot(f) { return potModel(FIXTURES.pot, ANCHOR.pot); },
-  pot2(f) { return potModel(FIXTURES.pot2, ANCHOR.pot2); },
+  pot(f) { return stoveModel(FIXTURES.pot, ANCHOR.pot); },
+  pot2(f) { return stoveModel(FIXTURES.pot2, ANCHOR.pot2); },
   boiler(f) { return boilerModel(FIXTURES.boiler); },
   boiler6(f) { return boilerModel(FIXTURES.boiler6); },
-  topping(f) {
-    const g = new THREE.Group(), d = FIXTURES.topping;
-    steelTable(g, d.w, d.d);
-    // 容器（バット）8つ
-    for (const [x, z] of ANCHOR.pans(d.w)) { const y0 = 0.9, st = STEEL(); add(g, T(box(0.148, 0.003, 0.148), x, y0, z), C(0x9aa0a6, { r: 0.35, m: 0.7 })); for (const [ox, oz, w, dd] of [[0, 0.073, 0.15, 0.004], [0, -0.073, 0.15, 0.004], [0.073, 0, 0.004, 0.15], [-0.073, 0, 0.004, 0.15]]) add(g, T(box(w, 0.05, dd), x + ox, y0, z + oz), st); }
-    return g;
-  },
-  board(f) {
-    const g = new THREE.Group(), d = FIXTURES.board;
-    steelTable(g, d.w, d.d);
-    add(g, T(rbox(0.55, 0.035, 0.36, 0.008), -0.1, 0.9), C(0xf0e4cc, { r: 0.75 }));
-    add(g, T(box(0.03, 0.01, 0.2), 0.32, 0.9, 0, 0, 0.3), CHROME());
-    add(g, T(box(0.03, 0.02, 0.1), 0.36, 0.9, 0.14, 0, 0.3), BLACK());
-    for (const x of [0.4, 0.48]) add(g, T(cyl(0.05, 0.045, 0.06, 12), x, 0.9, -0.18), STEEL());
-    return g;
-  },
+  topping(f) { return toppingModel(); },
+  board(f) { return boardModel(); },
   fridge(f) { return fridgeModel(FIXTURES.fridge, 2); },
   fridge2(f) { return fridgeModel(FIXTURES.fridge2, 3); },
-  dishrack(f) {
-    const g = new THREE.Group(), d = FIXTURES.dishrack, w = d.w;
-    for (const x of [-w / 2 + 0.02, w / 2 - 0.02]) add(g, box(0.03, 1.55, d.d), STEEL(), x, 0, 0);
-    add(g, T(box(w, 1.5, 0.02), 0, 0.02, -d.d / 2 + 0.01), STEEL());
-    for (const y of ANCHOR.rack.ys) add(g, T(box(w - 0.04, 0.02, d.d - 0.02), 0, y - 0.02), STEEL());
-    add(g, T(box(w, 0.03, d.d), 0, 1.55), STEEL());
-    const lbl = M(T(plane(0.7, 0.1), 0, 1.42), basic(signTexture('🍜丼　🍚小丼　🍽️皿　🍺ジョッキ', { w: 768, h: 96, bg: '#3a3f45', fg: '#ffffff', radius: 10 }))); lbl.position.z = d.d / 2 + 0.002; g.add(lbl);
-    return g;
-  },
-  sink(f) {
-    const g = new THREE.Group(), d = FIXTURES.sink;
-    add(g, box(d.w, 0.86, d.d), STEEL());
-    add(g, T(box(0.7, 0.02, d.d - 0.1), 0.25, 0.7), C(0xb7bec4, { r: 0.25, m: 0.8 }));
-    for (const z of [-d.d / 2 + 0.04, d.d / 2 - 0.04]) add(g, T(box(0.74, 0.18, 0.02), 0.25, 0.7, z), STEEL());
-    add(g, T(box(0.04, 0.4, 0.04), 0.25, 0.88, -d.d / 2 + 0.06), CHROME());
-    add(g, T(cyl(0.015, 0.015, 0.25, 8), 0.25, 1.26, -d.d / 2 + 0.06 + 0.12, Math.PI / 2), CHROME());
-    // 水切りかご（ステンレスの網かご）
-    add(g, T(box(0.56, 0.015, 0.44), -0.38, 0.86), C(0xb7bec4, { r: 0.25, m: 0.8 }));
-    const wire = CHROME();
-    for (const x of [-0.65, -0.11]) for (const z of [-0.21, 0.21]) add(g, T(cyl(0.006, 0.006, 0.2, 6), -0.38 + (x + 0.38), 0.875, z), wire);
-    for (const y of [0.97, 1.07]) { add(g, T(box(0.56, 0.008, 0.008), -0.38, y, -0.21), wire); add(g, T(box(0.56, 0.008, 0.008), -0.38, y, 0.21), wire); add(g, T(box(0.008, 0.008, 0.44), -0.66, y, 0), wire); add(g, T(box(0.008, 0.008, 0.44), -0.1, y, 0), wire); }
-    for (let i = 0; i < 7; i++) add(g, T(box(0.006, 0.06, 0.4), -0.62 + i * 0.08, 0.875, 0), wire);
-    // 洗剤とスポンジ
-    add(g, T(cyl(0.028, 0.032, 0.16, 10), 0.6, 0.86, -0.22), C(0x2e8bff, { r: 0.35 }));
-    add(g, T(rbox(0.08, 0.03, 0.05, 0.008), 0.55, 0.86, 0.2), C(0xf4d03f, { r: 0.8 }));
-    return g;
-  },
-  register(f) {
-    // 小さなカウンターの上のレジ
-    const g = new THREE.Group(), d = FIXTURES.register;
-    add(g, box(d.w, 0.95, d.d), C(0x6b4a30, { r: 0.6 }));
-    add(g, T(rbox(d.w + 0.04, 0.04, d.d + 0.04, 0.01), 0, 0.95), C(0x3a2a1e, { r: 0.4 }));
-    const body = new THREE.Group(); body.position.set(0, 0.99, -0.02);
-    add(body, rbox(0.42, 0.1, 0.36, 0.02), C(0xe9e4d8, { r: 0.4 }));
-    add(body, T(box(0.4, 0.07, 0.02), 0, 0.012, 0.18), C(0xd8d2c4, { r: 0.4 }));
-    add(body, T(box(0.04, 0.02, 0.01), 0, 0.045, 0.19), C(0x9aa0a6, { r: 0.3, m: 0.7 }));
-    add(body, T(rbox(0.36, 0.06, 0.2, 0.015), 0, 0.1, -0.02, -0.35), C(0xcfc8b8, { r: 0.4 }));
-    for (let i = 0; i < 12; i++) add(body, T(box(0.04, 0.012, 0.03), -0.09 + (i % 4) * 0.06, 0.13 + Math.floor(i / 4) * 0.012, 0.03 - Math.floor(i / 4) * 0.04, -0.35), C(i === 11 ? 0xd62828 : 0x4a4a4a, { r: 0.5 }));
-    add(body, T(box(0.2, 0.09, 0.03), 0, 0.2, -0.13, -0.2), C(0x2b2d42, { r: 0.4 }));
-    const scr = M(T(plane(0.18, 0.07), 0, 0), basic(signTexture('¥ 0', { w: 256, h: 96, bg: '#163a2a', fg: '#5dff9f', radius: 6 }))); scr.position.set(0, 0.205, -0.114); scr.rotation.x = -0.2; body.add(scr);
-    g.add(body);
-    const tag = M(T(plane(0.5, 0.14), 0, 0), basic(signTexture('お会計', { w: 384, h: 110, bg: '#b3201b', fg: '#fff5e6', radius: 10 }))); tag.position.set(0, 0.7, d.d / 2 + 0.003); g.add(tag);
-    return g;
-  },
-  pass(f) {
-    const g = new THREE.Group(), d = FIXTURES.pass;
-    add(g, box(d.w, 1.0, d.d), C(0x6b4a30, { r: 0.6 }));
-    add(g, T(rbox(d.w + 0.04, 0.04, d.d + 0.04, 0.01), 0, 1.0), STEEL());
-    for (const x of [-d.w / 2 + 0.04, d.w / 2 - 0.04]) add(g, T(cyl(0.015, 0.015, 0.55, 8), x, 1.04, -d.d / 2 + 0.05), CHROME());
-    add(g, T(rbox(d.w, 0.06, 0.2, 0.02), 0, 1.58, -d.d / 2 + 0.12), STEEL());
-    add(g, T(box(d.w - 0.1, 0.01, 0.12), 0, 1.575, -d.d / 2 + 0.12), C(0xffb070, { e: 0xff7a20, ei: 0.8 }));
-    add(g, T(sph(0.05, 12, 8), d.w / 2 - 0.12, 1.04, d.d / 2 - 0.12, 0, 0, 0, 1, 0.6, 1), C(0xc9a227, { r: 0.3, m: 0.8 }));
-    const lbl = M(T(plane(0.6, 0.12), 0, 0.82), basic(signTexture('🛎️ 受け渡し', { w: 512, h: 100, bg: '#fffdf6', fg: '#6b4a30', radius: 12 }))); lbl.position.z = d.d / 2 + 0.002; g.add(lbl);
-    return g;
-  },
-  rice(f) {
-    const g = new THREE.Group();
-    add(g, box(0.56, 0.7, 0.56), C(0x6b4a30, { r: 0.6 }));
-    add(g, T(rbox(0.4, 0.26, 0.34, 0.08), 0, 0.7), C(0xf6f6f2, { r: 0.35 }));
-    add(g, T(rbox(0.36, 0.04, 0.3, 0.02), 0, 0.95), C(0xd8d8d0, { r: 0.35 }));
-    add(g, T(box(0.12, 0.05, 0.01), 0, 0.8, 0.171), C(0x2b6cb0, { r: 0.3, e: 0x123a66 }));
-    return g;
-  },
-  gyoza(f) {
-    const g = new THREE.Group(), d = FIXTURES.gyoza;
-    steelTable(g, d.w, d.d, 0.86, false);
-    add(g, T(box(d.w - 0.08, 0.04, d.d - 0.12), 0, 0.86), C(0x2a2a2c, { r: 0.35, m: 0.6 }));
-    for (const z of [-0.2, 0.2]) add(g, T(box(0.06, 0.03, 0.04), d.w / 2 - 0.08, 0.6, d.d / 2 + 0.01), C(0xb0b6bc, { m: 0.7, r: 0.3 }), 0, 0, 0);
-    add(g, T(box(d.w - 0.1, 0.15, 0.02), 0, 0.88, -d.d / 2 + 0.06), STEEL());
-    return g;
-  },
-  fryer(f) {
-    const g = new THREE.Group(), d = FIXTURES.fryer;
-    add(g, box(d.w, 0.86, d.d), STEEL());
-    add(g, T(box(d.w - 0.12, 0.02, d.d - 0.16), 0, 0.84), C(0xc79a3a, { r: 0.1, m: 0.2 }));
-    add(g, T(box(d.w, 0.25, 0.04), 0, 0.86, -d.d / 2 + 0.02), STEEL());
-    for (const x of [-0.2, 0.2]) add(g, T(cyl(0.025, 0.025, 0.02, 12), x, 0.6, d.d / 2 + 0.005, Math.PI / 2), BLACK());
-    return g;
-  },
-  beer(f) {
-    const g = new THREE.Group();
-    add(g, box(0.56, 0.9, 0.56), C(0x6b4a30, { r: 0.6 }));
-    add(g, T(rbox(0.36, 0.42, 0.36, 0.04), 0, 0.9), STEEL());
-    add(g, T(cyl(0.02, 0.02, 0.12, 8), 0, 1.15, 0.2, Math.PI / 2), CHROME());
-    add(g, T(box(0.04, 0.14, 0.04), 0, 1.2, 0.26), C(0xf2b705, { r: 0.4 }));
-    add(g, T(box(0.3, 0.02, 0.18), 0, 0.9, 0.18), C(0x8d949a, { m: 0.7, r: 0.4 }));
-    const lbl = M(T(plane(0.3, 0.12), 0, 0.98), basic(signTexture('生ビール', { w: 256, h: 100, bg: '#f2b705', fg: '#3a2200', radius: 10 }))); lbl.position.z = 0.182; g.add(lbl);
-    return g;
-  },
+  dishrack(f) { return dishrackModel(); },
+  sink(f) { return sinkModel(); },
+  register(f) { return registerModel(); },
+  pass(f) { return passModel(); },
+  rice(f) { return riceModel(); },
+  gyoza(f) { return gyozaModel(); },
+  fryer(f) { return fryerModel(); },
+  beer(f) { return beerModel(); },
   // ---------- 客席 ----------
   counter(f) { return counterModel(FIXTURES.counter); },
   counter2(f) { return counterModel(FIXTURES.counter2); },
   table2(f) { return tableModel(FIXTURES.table2); },
   table4(f) { return tableModel(FIXTURES.table4); },
-  zashiki(f) {
-    const g = new THREE.Group(), d = FIXTURES.zashiki;
-    add(g, box(d.w, 0.35, d.d), DWOOD());
-    add(g, T(box(d.w - 0.08, 0.02, d.d - 0.08), 0, 0.35), mat(0xffffff, { map: tatamiTex(), r: 0.85 }));
-    add(g, T(rbox(d.w - 0.5, 0.05, 0.8, 0.01), 0, 0.62), DWOOD());
-    for (const x of [-d.w / 2 + 0.4, d.w / 2 - 0.4]) for (const z of [-0.3, 0.3]) add(g, T(box(0.05, 0.25, 0.05), x, 0.37, z), DWOOD());
-    d.seats.forEach(([x, z]) => add(g, T(rbox(0.4, 0.05, 0.4, 0.02), x, 0.37, z * 0.98), C(0x8e2b2b, { r: 0.85 })));
-    return g;
-  },
-  ticket(f, ctx) {
-    const g = new THREE.Group(), body = C(0xe9ecef, { r: 0.35, m: 0.3 });
-    add(g, rbox(0.76, 1.65, 0.55, 0.03), body);
-    const face = M(T(plane(0.62, 0.62), 0, 0.92), basic(ticketFace(ctx.menu || []))); face.position.z = 0.276; g.add(face);
-    add(g, T(box(0.2, 0.12, 0.02), 0, 0.62), C(0x111111), 0.2, 0, 0.27);
-    add(g, T(box(0.3, 0.05, 0.03), 0, 0.42), C(0x222222), 0, 0, 0.27);
-    add(g, T(box(0.76, 0.12, 0.56), 0, 1.6), C(ctx.color || '#c0392b', { r: 0.4 }));
-    const top = M(T(plane(0.7, 0.1), 0, 1.61), basic(signTexture('食券', { w: 256, h: 64, bg: ctx.color || '#c0392b', fg: '#ffffff' }))); top.position.z = 0.282; g.add(top);
-    return g;
-  },
-  bench(f) {
-    const g = new THREE.Group(), w = WOOD();
-    add(g, T(box(1.45, 0.05, 0.4), 0, 0.42), w);
-    for (const x of [-0.62, 0.62]) add(g, box(0.06, 0.42, 0.36), DWOOD(), x);
-    add(g, T(box(1.45, 0.3, 0.04), 0, 0.5, -0.2), DWOOD());
-    return g;
-  },
-  water(f) {
-    const g = new THREE.Group();
-    add(g, rbox(0.36, 1.0, 0.36, 0.03), C(0xf2f2f2, { r: 0.4 }));
-    add(g, T(cyl(0.15, 0.15, 0.42, 16), 0, 1.0), mat(0x9fd3ff, { r: 0.05, t: true, op: 0.55 }));
-    for (let i = 0; i < 4; i++) add(g, T(cyl(0.03, 0.025, 0.08, 10), -0.09 + i * 0.06, 0.62, 0.22), mat(0xe8f6ff, { r: 0.05, t: true, op: 0.5 }));
-    add(g, T(box(0.3, 0.02, 0.1), 0, 0.6, 0.22), C(0xcfd4d8, { m: 0.6 }));
-    return g;
-  },
-  trash(f) {
-    const g = new THREE.Group();
-    add(g, cyl(0.2, 0.18, 0.62, 16), C(0x3b6e4f, { r: 0.5, m: 0.2 }));
-    add(g, T(cyl(0.215, 0.215, 0.04, 16), 0, 0.62), C(0x2a4a36, { r: 0.5 }));
-    add(g, T(box(0.1, 0.04, 0.04), 0, 0.66), C(0x2a4a36));
-    const lbl = M(T(plane(0.2, 0.12), 0, 0.36), basic(signTexture('生ゴミ', { w: 256, h: 128, bg: '#ffffff', fg: '#2a4a36', radius: 12 }))); lbl.position.z = 0.192; g.add(lbl);
-    return g;
-  },
+  zashiki(f) { return zashikiModel(FIXTURES.zashiki, tatamiTex()); },
+  ticket(f, ctx) { return ticketModel(ticketFace(ctx.menu || []), ctx.color || '#c0392b'); },
+  bench(f) { return benchModel(); },
+  water(f) { return waterModel(); },
+  trash(f) { return trashModel(); },
   // ---------- 防犯・防火 ----------
   ext(f) {
     const g = new THREE.Group();
@@ -232,18 +88,12 @@ const BUILD = {
     const g = new THREE.Group();
     add(g, cyl(0.25, 0.3, 0.6, 16), DARK());
     add(g, T(sph(0.22, 16, 10), 0, 0.75), C(0x5a6470, { r: 0.35, m: 0.6 }));
-    add(g, T(cyl(0.05, 0.05, 0.36, 10), 0, 0.75, 0.18, Math.PI / 2), BLACK());
+    add(g, T(cyl(0.05, 0.05, 0.2, 10), 0, 0.75, 0.12, Math.PI / 2), BLACK());
     add(g, T(sph(0.04, 10, 6), 0, 0.88, 0.16), C(0xff3b3b, { e: 0xff0000, ei: 0.8 }));
     return g;
   },
   // ---------- 装飾 ----------
-  plant(f) {
-    const g = new THREE.Group();
-    add(g, lathe([[0, 0], [0.15, 0], [0.2, 0.38], [0.22, 0.4], [0.22, 0.43], [0, 0.43]], 16), C(0x6b4a30, { r: 0.8 }));
-    const leaf = [C(0x2f7d32), C(0x43a047), C(0x1b5e20)];
-    for (let i = 0; i < 11; i++) { const a = i * 2.39, t = 0.35 + (i % 4) * 0.12, len = 0.55 + (i % 3) * 0.15; const tx = Math.cos(a) * t, tz = Math.sin(a) * t; add(g, T(sph(0.13, 10, 6), -len * Math.sin(tz), 0.42 + len * Math.cos(tz) * Math.cos(tx), len * Math.cos(tz) * Math.sin(tx), 0.4, a, 0, 1, 0.18, 0.62), leaf[i % 3]); }
-    return g;
-  },
+  plant(f) { return plantModel(); },
   maneki(f) {
     const g = new THREE.Group(), w = C(0xfafafa, { r: 0.3 });
     add(g, box(0.4, 0.5, 0.4), DWOOD());
@@ -277,16 +127,7 @@ const BUILD = {
     add(g, T(rbox(0.12, 0.2, 0.06, 0.02), 0.2, 0.25, 0.1), C(0xe9d8b4));
     return g;
   },
-  kamidana(f) {
-    const g = new THREE.Group(), w = C(0xe6cfa0, { r: 0.6 });
-    add(g, T(box(0.95, 0.03, 0.35), 0, 2.2), w);
-    for (const x of [-0.42, 0.42]) add(g, T(box(0.04, 0.2, 0.3), x, 2.0), w);
-    add(g, T(box(0.4, 0.3, 0.2), 0, 2.23), w);
-    add(g, T(cone(0.28, 0.12, 4), 0, 2.53, 0, 0, Math.PI / 4), C(0x6b4a30));
-    for (const x of [-0.3, 0.3]) add(g, T(cyl(0.04, 0.05, 0.12, 8), x, 2.23), C(0xffffff));
-    add(g, T(torus(0.25, 0.015, 6, 20, Math.PI), 0, 2.2, 0.18, 0, 0, Math.PI), C(0xe0c080));
-    return g;
-  },
+  kamidana(f) { return kamidanaModel(); },
   kumade(f) {
     const g = new THREE.Group();
     add(g, T(cyl(0.015, 0.015, 1.4, 6), 0, 1.0, -0.05, 0, 0, 0.1), C(0xd8b48a));
@@ -314,12 +155,14 @@ const BUILD = {
   },
   nobori(f, ctx) {
     const g = new THREE.Group();
-    add(g, cyl(0.15, 0.17, 0.08, 14), DARK());
-    add(g, cyl(0.02, 0.02, 2.4, 8), CHROME());
-    add(g, T(cyl(0.012, 0.012, 0.5, 6), 0.25, 2.35, 0, 0, 0, Math.PI / 2), CHROME());
+    // 足もとの重し・竿・横棒（旗は置き場所の中に収まるように）
+    const px = -0.19;
+    add(g, T(rbox(0.12, 0.12, 0.3, 0.02), px + 0.0, 0, 0), DARK());
+    add(g, T(cyl(0.02, 0.02, 2.4, 8), px, 0), CHROME());
+    add(g, T(cyl(0.012, 0.012, 0.4, 6), px + 0.4, 2.35, 0, 0, 0, Math.PI / 2), CHROME());
     const bg = f.c && f.c !== '#ffffff' ? f.c : ctx.color;
     const t = vtext(f.tx || 'ラーメン', { w: 128, h: 448, bg, fg: '#ffffff', border: '#ffffff' });
-    g.add(M(T(plane(0.45, 1.6), 0.25, 1.55, 0.01), basic(t, { side: THREE.DoubleSide })));
+    g.add(M(T(plane(0.38, 1.6), 0.01, 1.55, 0.01), basic(t, { side: THREE.DoubleSide })));
     return g;
   },
   menuboard(f, ctx) {
@@ -399,79 +242,6 @@ const BUILD = {
     return g;
   },
 };
-function potModel(def, A) {
-  const g = new THREE.Group();
-  add(g, rbox(def.w, 0.42, def.d, 0.02), STEEL());
-  add(g, T(box(def.w - 0.1, 0.01, def.d - 0.1), 0, 0.42), BLACK());
-  for (const x of [-0.25, 0.25]) add(g, T(cyl(0.03, 0.03, 0.02, 12), x, 0.25, def.d / 2 + 0.005, Math.PI / 2), BLACK());
-  add(g, T(torus(0.12, 0.012, 6, 16), 0, 0.44, 0, Math.PI / 2), C(0x2b2b2b, { m: 0.6 }));
-  // 寸胴鍋
-  add(g, T(cyl(A.r, A.r, A.h, 24, true), 0, A.y - 0.05), mat(0xdde1e4, { r: 0.25, m: 0.85, side: THREE.DoubleSide }));
-  add(g, T(cyl(A.r, A.r, 0.01, 24), 0, A.y - 0.05), mat(0xbfc5ca, { r: 0.3, m: 0.8 }));
-  add(g, T(torus(A.r, 0.01, 6, 24), 0, A.y - 0.05 + A.h, 0, Math.PI / 2), CHROME());
-  for (const s of [-1, 1]) add(g, T(torus(0.05, 0.01, 5, 10, Math.PI), s * (A.r + 0.03), A.y + A.h - 0.12, 0, 0, s > 0 ? Math.PI / 2 : -Math.PI / 2, Math.PI / 2), CHROME());
-  // おたま
-  add(g, T(cyl(0.006, 0.006, 0.5, 6), A.r - 0.06, A.y + 0.15, 0.05, 0, 0, -0.35), CHROME());
-  return g;
-}
-function boilerModel(def) {
-  const g = new THREE.Group();
-  add(g, box(def.w, 0.86, def.d), STEEL());
-  add(g, T(box(def.w - 0.08, 0.02, def.d - 0.1), 0, ANCHOR.boilerY - 0.04), mat(0x9fc6d6, { r: 0.05, m: 0.1, t: true, op: 0.8 }));
-  add(g, T(box(def.w, 0.22, 0.04), 0, 0.86, -def.d / 2 + 0.02), STEEL());
-  add(g, T(box(0.2, 0.08, 0.01), 0, 0.5, def.d / 2 + 0.002), C(0x111111, { e: 0x0a3a1a }));
-  for (let i = 0; i < def.baskets; i++) {
-    const [x, z] = basketPos(def.id, i);
-    add(g, T(torus(0.09, 0.008, 5, 16), x, ANCHOR.boilerY - 0.03, z, Math.PI / 2), CHROME());
-  }
-  return g;
-}
-function fridgeModel(def, doors) {
-  const g = new THREE.Group();
-  add(g, rbox(def.w, 1.9, def.d, 0.02), STEEL());
-  for (let i = 0; i < doors; i++) {
-    const dw = def.w / doors, x = -def.w / 2 + dw * (i + 0.5);
-    add(g, T(box(dw - 0.02, 1.7, 0.02), x, 0.12, def.d / 2), smat(surf('metal'), 0xf2f4f6, { r: 0.25, m: 0.7 }));
-    add(g, T(box(0.03, 0.4, 0.04), x + (i % 2 ? -1 : 1) * (dw / 2 - 0.08), 0.95, def.d / 2 + 0.03), CHROME());
-  }
-  add(g, T(box(0.18, 0.06, 0.01), 0, 1.78, def.d / 2 + 0.015), C(0x111111, { e: 0x103a5a }));
-  return g;
-}
-function counterModel(def) {
-  const g = new THREE.Group(), w = def.w;
-  // 天板（客席側）と腰板・厨房側の低い作業台
-  add(g, T(rbox(w, 0.06, 0.62, 0.01), 0, 0.92, -0.4), smat(surf('wood'), 0xd9b27c, { r: 0.45 }));
-  add(g, T(box(w, 0.92, 0.06), 0, 0, -0.12), DWOOD());
-  add(g, T(box(w, 0.08, 0.04), 0, 0.12, -0.08), BLACK());
-  add(g, T(box(w, 0.04, 0.5), 0, 0.78, -0.42), STEEL());
-  add(g, T(box(w, 0.78, 0.04), 0, 0, -0.68), STEEL());
-  // 調味料（こしょう・酢・ラー油）と箸立て
-  for (let i = 0; i < def.seats.length; i++) {
-    const [x] = def.seats[i];
-    if (i % 2 === 0) { add(g, T(cyl(0.035, 0.035, 0.12, 10), x + 0.28, 0.98, -0.2), C(0x6b4a30)); add(g, T(cyl(0.015, 0.015, 0.1, 8), x + 0.36, 0.98, -0.2), C(0x8a2a1a)); add(g, T(cyl(0.015, 0.015, 0.1, 8), x + 0.4, 0.98, -0.2), C(0xf2f0e8)); }
-  }
-  // スツール
-  for (const [x, z] of def.seats) {
-    add(g, T(cyl(0.035, 0.05, 0.62, 10), x, 0, z), CHROME());
-    add(g, T(cyl(0.18, 0.18, 0.08, 18), x, 0.62, z), C(0x9b1c1c, { r: 0.6 }));
-    add(g, T(torus(0.14, 0.01, 5, 16), x, 0.24, z, Math.PI / 2), CHROME());
-  }
-  return g;
-}
-function tableModel(def) {
-  const g = new THREE.Group(), tw = def.w - 0.1, td = def.seats.some(([, z]) => Math.abs(z) > 0.65) ? 0.85 : 0.75;
-  add(g, T(rbox(tw, 0.05, td, 0.01), 0, def.top - 0.05), smat(surf('wood'), 0xc8955a, { r: 0.45 }));
-  add(g, T(cyl(0.04, 0.05, def.top - 0.05, 10), 0, 0), BLACK());
-  add(g, T(cyl(0.25, 0.28, 0.03, 18), 0, 0), BLACK());
-  add(g, T(cyl(0.03, 0.03, 0.12, 8), tw / 2 - 0.12, def.top, 0), C(0x6b4a30));
-  for (const [x, z] of def.seats) {
-    const s = Math.sign(z);
-    add(g, T(rbox(0.38, 0.05, 0.38, 0.015), x, 0.45, z), smat(surf('wood'), 0xa87a4a, { r: 0.5 }));
-    for (const dx of [-0.15, 0.15]) for (const dz of [-0.15, 0.15]) add(g, T(box(0.03, 0.45, 0.03), x + dx, 0, z + dz), DWOOD());
-    add(g, T(box(0.36, 0.4, 0.03), x, 0.5, z + s * 0.18), smat(surf('wood'), 0xa87a4a, { r: 0.5 }));
-  }
-  return g;
-}
 let pcTex = null;
 function pcScreen() {
   return pcTex ||= canvasTex(512, 320, (c, W, H) => {

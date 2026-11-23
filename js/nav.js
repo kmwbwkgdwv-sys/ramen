@@ -29,7 +29,7 @@ export class NavGrid {
     for (const w of getWalls(store)) this._mark(w, 1, 0.22);
     for (const f of store.fixtures) {
       if (FIXTURES[f.t]?.air) continue; // 吊るす物の下は通れる
-      this._mark(fixtureFootprint(f.t, f.x, f.z, f.r), 1, 0.12);
+      this._mark(fixtureFootprint(f.t, f.x, f.z, f.r), 1, 0.18); // 体の幅ぶん離れて歩く（設備にめりこまない）
     }
     this.version++;
   }

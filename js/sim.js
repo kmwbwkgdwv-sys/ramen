@@ -621,7 +621,7 @@ export class Sim {
     best.l.d = d; best.l.q = best.e.q;
     d.t = this.clk; delete d.for;
     const st = this.store, T = st.today;
-    if (best.l.k === 'ramen') { T.bowls++; st.stats.bowls++; st.totalBowls = (st.totalBowls || 0) + 1; if (!c.eatS) { c.eatS = this.clk; c.st = 'eat'; c.an = 'eat'; } } else T.sides++;
+    if (best.l.k === 'ramen') { T.bowls++; st.stats.bowls++; st.totalBowls = (st.totalBowls || 0) + 1; if (!c.eatS) { c.eatS = this.clk; c.st = 'eat'; c.an = sitAn(c, true); } } else T.sides++;
     T.qs += best.e.q; T.qn++;
     const q = best.e.q;
     this.bubble(c, q >= 90 ? 'love' : q >= 70 ? 'happy' : q >= 45 ? 'ok' : 'meh');
@@ -1413,7 +1413,7 @@ export class Sim {
         if (!f) { c.seat = null; c.st = 'wseat'; c.pat = 40; break; }
         if (stepPath(c, dt, c.spd)) {
           const [x, z] = seatPos(f, c.seat[1]);
-          c.x = x; c.z = z; c.ry = seatYaw(f, c.seat[1]); c.an = 'sit'; c.y = isCounter(f.t) ? 0.22 : f.t === 'zashiki' ? 0.18 : 0;
+          c.zen = f.t === 'zashiki'; c.x = x; c.z = z; c.ry = seatYaw(f, c.seat[1]); c.an = sitAn(c); c.y = isCounter(f.t) ? 0.22 : c.zen ? 0.18 : 0;
           c.st = 'seated'; c.ordT = this.clk;
           c.pat = (c.kind === 'critic' ? 130 : clamp(160 - this.level * 1.2, 105, 160)) * (st.fixtures.some((o) => o.t === 'water') ? 1.12 : 1);
           this.bubble(c, 'order'); this.sfx('order', c.x, c.z);
@@ -1423,12 +1423,12 @@ export class Sim {
       case 'seated': case 'eat': {
         const unserved = c.lines.some((l) => !l.d);
         if (c.st === 'eat') {
-          c.an = 'eat';
+          c.an = sitAn(c, true);
           if (c.firstT == null) c.firstT = (c.eatS ?? this.clk) - c.ordT;
           const dur = 18 + 5 * c.lines.length;
           if (this.clk - c.eatS >= dur) {
             if (!unserved) return this.finishEat(c);
-            c.an = 'sit'; c.pat -= dt * 0.8;
+            c.an = sitAn(c); c.pat -= dt * 0.8;
             if (c.pat < 15 && !c.bub) this.bubble(c, 'wait');
             if (c.pat <= 0) { this.refund(c); this.store.today.lost++; return this.finishEat(c); }
           }
@@ -1766,6 +1766,8 @@ export class Sim {
   }
 }
 
+// 座っている姿勢（座敷は正座）
+const sitAn = (c, eat = false) => (c.zen ? 'z' : '') + (eat ? 'eat' : 'sit');
 export function stepPath(e, dt, spd) {
   if (!e.path || e.pi >= e.path.length) return true;
   let remain = spd * dt;

@@ -366,7 +366,8 @@ export class Character {
   }
   update(dt) {
     this.t += dt;
-    const a = this.anim, walk = a === 'walk';
+    const zen = this.anim === 'zsit' || this.anim === 'zeat' || this.anim === 'zstir'; // 座敷・賭場では正座
+    const a = zen ? this.anim.slice(1) : this.anim, walk = a === 'walk';
     if (walk) this.phase += dt * (4.6 + this.speed * 3.8);
     const s = walk ? Math.sin(this.phase) : 0;
     const k = Math.min(1, dt * 12);
@@ -395,10 +396,10 @@ export class Character {
     to(this.shoulderL, 'x', sl); to(this.shoulderR, 'x', sr); to(this.elbowL, 'x', el); to(this.elbowR, 'x', er);
     to(this.shoulderL, 'z', zl); to(this.shoulderR, 'z', zr);
     // 座る（いす・スツール）
-    const sit = a === 'sit' || a === 'eat';
-    if (sit) { this.thighL.rotation.x = this.thighR.rotation.x = -1.45; this.kneeL.rotation.x = this.kneeR.rotation.x = 1.45; }
+    const sit = a === 'sit' || a === 'eat' || zen;
+    if (sit) { this.thighL.rotation.x = this.thighR.rotation.x = zen ? -1.5 : -1.45; this.kneeL.rotation.x = this.kneeR.rotation.x = zen ? 2.95 : 1.45; if (zen && this.ankleL) this.ankleL.rotation.x = this.ankleR.rotation.x = 0.9; }
     // 体
-    this.body.position.y = sit ? -0.44 : a === 'down' ? -0.75 : walk ? Math.abs(Math.cos(this.phase)) * 0.028 : Math.sin(this.t * 2) * 0.004;
+    this.body.position.y = sit ? (zen ? -0.6 : -0.44) : a === 'down' ? -0.75 : walk ? Math.abs(Math.cos(this.phase)) * 0.028 : Math.sin(this.t * 2) * 0.004;
     this.body.rotation.x += ((a === 'down' ? -1.5 : 0) - this.body.rotation.x) * k;
     to(this.torso, 'y', s * 0.07); to(this.torso, 'x', walk ? 0.04 : 0);
     to(this.torso, 'z', walk ? Math.sin(this.phase) * 0.022 : Math.sin(this.t * 0.45) * 0.01); // 体重の移動で少し左右にゆれる

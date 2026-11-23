@@ -70,6 +70,10 @@ export class Renderer {
     this.charRoot = new THREE.Group(); this.scene.add(this.charRoot);
     this.fxRoot = new THREE.Group(); this.scene.add(this.fxRoot);
     this.handRoot = new THREE.Group(); this.scene.add(this.handRoot);
+    // 一人称で手に持っている物と腕は、最後に重ねて描く（設備や壁にめりこんで見えないように）
+    this.fpScene = new THREE.Scene(); this.fpCam = new THREE.Group(); this.fpCam.matrixAutoUpdate = false; this.fpScene.add(this.fpCam);
+    this.fpScene.add(new THREE.HemisphereLight(0xfff6ea, 0x6d6458, 1.5));
+    { const fl = new THREE.DirectionalLight(0xffffff, 1.4); fl.position.set(0.4, 1, 0.6); this.fpScene.add(fl); }
     this.fixViews = new Map(); this.chars = new Map(); this.hands = new Map();
     this.storeRev = -1; this.t = 0; this.highlight = null; this.ghost = null;
     this._parts = []; this._pool = [];
@@ -102,6 +106,7 @@ export class Renderer {
       const c = new EffectComposer(this.r, new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4 }));
       c.addPass(new RenderPass(this.scene, this.camera));
       const ao = new SSAOPass(this.scene, this.camera, w, h, 16); ao.kernelRadius = 0.45; ao.minDistance = 0.00008; ao.maxDistance = 0.0035; c.addPass(ao);
+      const fpPass = new RenderPass(this.fpScene, this.camera); fpPass.clear = false; fpPass.clearDepth = true; c.addPass(fpPass);
       c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.45, 0.92));
       c.addPass(new OutputPass());
       this.composer = c; this.resize();
@@ -159,12 +164,13 @@ export class Renderer {
       if (v && v.key === key) continue;
       if (v) { this.fixRoot.remove(v.group); v.group.traverse((o) => o.isMesh && o.geometry.dispose()); }
       let g;
-      try { g = bakeGroup(buildFixture(f, { color: store.color, phase: store.phase, menu: store.menu })); }
+      try { g = bakeGroup(buildFixture(f, { color: store.color, phase: store.phase, menu: store.menu }), { fold: 1500 }); }
       catch (e) { console.warn('設備モデル失敗', f.t, e); g = new THREE.Group(); g.add(new THREE.Mesh(new THREE.BoxGeometry(def.w, 1, def.d).translate(0, 0.5, 0), mat(0xcccccc))); }
       g.position.set(f.x, 0, f.z); g.rotation.y = f.r * Math.PI / 2;
       g.traverse((o) => { if (o.isMesh) { o.userData.fid = f.id; o.castShadow = !this.lite && !o.material.transparent; o.receiveShadow = !this.lite; } });
       this.fixRoot.add(g);
       this.fixViews.set(f.id, { key, group: g });
+      if (!f.br) this._measureFix(f.t, g);
     }
     for (const [id, v] of this.fixViews) if (!seen.has(id)) { this.fixRoot.remove(v.group); v.group.traverse((o) => o.isMesh && o.geometry.dispose()); this.fixViews.delete(id); }
     // 開店前は札の上に目印
@@ -414,7 +420,7 @@ export class Renderer {
         v = { ch, x: e.x, z: e.z }; this.chars.set(e.key, v);
       }
       const ch = v.ch, o = ch.root;
-      const sitting = e.an === 'sit' || e.an === 'eat';
+      const sitting = e.an === 'sit' || e.an === 'eat' || e.an === 'zsit' || e.an === 'zeat' || e.an === 'zstir';
       if (e.local || (sitting && Math.hypot(o.position.x - e.x, o.position.z - e.z) > 0.6)) { o.position.set(e.x, e.y || 0, e.z); o.rotation.y = e.ry || 0; }
       else { const k = Math.min(1, dt * 10); o.position.x = lerp(o.position.x, e.x, k); o.position.z = lerp(o.position.z, e.z, k); o.position.y = lerp(o.position.y, e.y || 0, k); o.rotation.y = angleLerp(o.rotation.y, e.ry || 0, Math.min(1, dt * 10)); }
       const sp = Math.hypot(o.position.x - v.x, o.position.z - v.z) / Math.max(dt, 1e-3);
@@ -429,9 +435,30 @@ export class Renderer {
     for (const [k, v] of this.chars) if (!seen.has(k)) { v.ch.dispose(); this.chars.delete(k); }
   }
   getChar(key) { return this.chars.get(key)?.ch; }
+  // 設備の高さの地図（ローカル座標で 0.2m ごとの一番高い所）。持っている物やカメラが設備にめりこまないように使う
+  fixHeightMap(t) { return this.fixHG?.get(t) || null; }
+  _measureFix(t, g) {
+    if (!this.fixHG) this.fixHG = new Map();
+    if (this.fixHG.has(t) || !FIXTURES[t]) return;
+    const d = FIXTURES[t], C = 0.2, nx = Math.max(1, Math.ceil(d.w / C)), nz = Math.max(1, Math.ceil(d.d / C)), hs = new Float32Array(nx * nz);
+    const cl = (v, n) => Math.max(0, Math.min(n - 1, v));
+    let top = 0;
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      const p = o.geometry.attributes.position, idx = o.geometry.index, n = idx ? idx.count : p.count;
+      for (let k = 0; k + 2 < n; k += 3) {
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y1 = -1e9;
+        for (let m = 0; m < 3; m++) { const v = idx ? idx.getX(k + m) : k + m, x = p.getX(v), y = p.getY(v), z = p.getZ(v); if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; if (y > y1) y1 = y; }
+        if (y1 > top) top = y1;
+        const i0 = cl(Math.floor((x0 + d.w / 2) / C), nx), i1 = cl(Math.floor((x1 + d.w / 2) / C), nx), j0 = cl(Math.floor((z0 + d.d / 2) / C), nz), j1 = cl(Math.floor((z1 + d.d / 2) / C), nz);
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (hs[j * nx + i] < y1) hs[j * nx + i] = y1;
+      }
+    });
+    this.fixHG.set(t, { nx, nz, C, w: d.w, d: d.d, hs, top });
+  }
   // 一人称の腕（持っている物に両手を添える）
   _fpRig(av, size) {
-    if (!this.fpHands) { if (!this.camera.parent) this.scene.add(this.camera); this.fpHands = new THREE.Group(); this.camera.add(this.fpHands); }
+    if (!this.fpHands) { this.fpHands = new THREE.Group(); this.fpCam.add(this.fpHands); }
     const key = [av.skin, av.top, av.topColor, size.join(',')].join('|');
     if (this._fpKey !== key) {
       this._fpKey = key; this.fpHands.clear();
@@ -452,7 +479,7 @@ export class Renderer {
     const get = (key, hd) => {
       const k = key + '|' + itemKey(hd); alive.add(k);
       let o = this.hands.get(k);
-      if (!o) { for (const [kk, oo] of this.hands) if (kk.startsWith(key + '|')) { this.handRoot.remove(oo); this.hands.delete(kk); } o = make(hd); o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.renderOrder = 3; } }); this.handRoot.add(o); this.hands.set(k, o); }
+      if (!o) { for (const [kk, oo] of this.hands) if (kk.startsWith(key + '|')) { oo.removeFromParent(); this.hands.delete(kk); } o = make(hd); o.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.renderOrder = 3; } }); this.handRoot.add(o); this.hands.set(k, o); }
       return o;
     };
     let fpOn = false;
@@ -463,8 +490,10 @@ export class Renderer {
       if (hd.t === 'ext') { off = [0.2, -0.32 + bob, -0.42]; rot = [0.9, 0.2, 0]; w = 0.1; }
       if (hd.t === 'shuri') { off = [0.2, -0.24 + bob, -0.4]; rot = [0.3, 0, 0.3]; w = 0.08; }
       if (hd.t === 'dish' && hd.d.k === 'mug') { off = [0.12, -0.32 + bob, -0.42]; w = 0.1; }
+      if (o.parent !== this.fpCam) this.fpCam.add(o);
+      this.fpCam.matrix.copy(this.camera.matrixWorld); this.fpCam.matrixWorldNeedsUpdate = true;
       _m.compose(_v.set(...off), _q.setFromEuler(_e.set(...rot)), _s.set(1, 1, 1));
-      o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(this.camera.matrixWorld, _m); o.matrixWorldNeedsUpdate = true;
+      o.matrixAutoUpdate = false; o.matrix.copy(_m); o.matrixWorldNeedsUpdate = true;
       this._fpRig(fp.av, [w, 0.1, 0.02]);
       this.fpHands.position.set(off[0], off[1] + 0.02, off[2] + 0.02); this.fpHands.rotation.set(0.12, 0, 0);
       fpOn = true;
@@ -477,11 +506,11 @@ export class Renderer {
       ch.root.updateMatrixWorld(true);
       const hd = e.hand, H = ch.av.height;
       if (hd.t === 'ext' || hd.t === 'shuri') { _m.compose(_v.set(0, -0.36, 0.08), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.armR.matrixWorld, _m); }
-      else { _m.compose(_v.set(0, 1.02 * H, 0.34), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.root.matrixWorld, _m); }
+      else { _m.compose(_v.set(0, 1.02 * H, e.hz ?? 0.34), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.root.matrixWorld, _m); }
       o.matrixWorldNeedsUpdate = true;
       ch.carry = hd.t === 'dish' || hd.t === 'dirty' || hd.t === 'clean';
     }
-    for (const [k, o] of this.hands) if (!alive.has(k)) { this.handRoot.remove(o); this.hands.delete(k); }
+    for (const [k, o] of this.hands) if (!alive.has(k)) { o.removeFromParent(); this.hands.delete(k); }
   }
   // ---------- ハイライト・ゴースト ----------
   setHighlight(fid, slotBox) {
@@ -539,7 +568,7 @@ export class Renderer {
   }
   _makeThumb(type, color) {
     let g = null;
-    try { g = bakeGroup(buildFixture({ t: type, x: 0, z: 0, r: 0, tx: FIXTURES[type].text ? 'ラーメン' : undefined, c: '#ffffff' }, { color, phase: 'open', menu: this.store?.menu || [] })); } catch (e) { return null; }
+    try { g = bakeGroup(buildFixture({ t: type, x: 0, z: 0, r: 0, tx: FIXTURES[type].text ? 'ラーメン' : undefined, c: '#ffffff' }, { color, phase: 'open', menu: this.store?.menu || [] }), { fold: 1500 }); } catch (e) { return null; }
     const r = this._shoot(g); try { g.traverse((o) => o.geometry?.dispose?.()); } catch (e) { /* noop */ }
     return r?.url || null;
   }
@@ -569,7 +598,7 @@ export class Renderer {
       this._ghostKey = k;
       if (this.ghost) { this.scene.remove(this.ghost); this.ghost = null; }
       if (type) {
-        const g = bakeGroup(buildFixture({ t: type, x: 0, z: 0, r: 0, tx: 'NEW', c: '#ffffff' }, { color: store?.color || '#c0392b', menu: store?.menu || [] }));
+        const g = bakeGroup(buildFixture({ t: type, x: 0, z: 0, r: 0, tx: 'NEW', c: '#ffffff' }, { color: store?.color || '#c0392b', menu: store?.menu || [] }), { fold: 1500 });
         this.ghostMats = [new THREE.MeshBasicMaterial({ color: 0x4cff8a, transparent: true, opacity: 0.45, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff4c4c, transparent: true, opacity: 0.45, depthWrite: false })];
         g.traverse((o) => { if (o.isMesh) { o.material = this.ghostMats[0]; o.castShadow = false; o.userData.noRay = true; } });
         const def = FIXTURES[type], pad = new THREE.Mesh(new THREE.PlaneGeometry(def.w, def.d), this.ghostMats[0]); pad.rotation.x = -Math.PI / 2; pad.position.y = 0.02; g.add(pad);
@@ -630,8 +659,17 @@ export class Renderer {
     this._fit();
     try { this._thumbTick(); thumbTick(this._thumbQ?.length ? 3 : 6); } catch (e) { /* noop */ }
     if (this.signHint?.visible) this.signHint.position.y = 2.0 + Math.sin(performance.now() / 260) * 0.06;
-    if (this.composer) { try { this.composer.render(); return; } catch (e) { console.warn('post error', e); this.composer = null; } }
+    if (this.composer) { try { this.fpScene.environment = this.scene.environment; this.composer.render(); return; } catch (e) { console.warn('post error', e); this.composer = null; } }
     this.r.render(this.scene, this.camera);
+    this._renderFp();
+  }
+  // 一人称の持ち物を、奥行きをリセットして上に重ねる
+  _renderFp() {
+    if (!this.fpCam.children.some((c) => c.visible)) return;
+    this.fpScene.environment = this.scene.environment;
+    const ac = this.r.autoClear; this.r.autoClear = false;
+    this.r.clearDepth(); this.r.render(this.fpScene, this.camera);
+    this.r.autoClear = ac;
   }
 }
 const isCounterT = (t) => t === 'counter' || t === 'counter2';

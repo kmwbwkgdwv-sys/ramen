@@ -449,10 +449,11 @@ export function dryRackMesh(list) {
     list.slice(0, 12).forEach((k, i) => {
       const s = new THREE.Group(), row = Math.floor(i / 6), col = i % 6;
       if (k === 'plate') plateBase(s); else if (k === 'mug') { s.add(new THREE.Mesh(lathe([[0.034, 0], [0.041, 0.002], [0.043, 0.012], [0.043, 0.15], [0.0405, 0.15], [0.0395, 0.018], [0, 0.018]], 14), mat('#eef7ff', { r: 0.05, t: true, op: 0.35, side: THREE.DoubleSide }))); }
-      else { bowlBase(s, k); if (k === 'bowl') s.scale.setScalar(BOWL_SCALE * 0.82); }
-      const big = k === 'bowl' ? 0.112 : k === 'bowlS' ? 0.066 : k === 'plate' ? 0.12 : 0;
-      s.rotation.set(k === 'mug' ? Math.PI : 1.42, 0, 0);
-      s.position.set(-0.22 + col * 0.088, k === 'mug' ? 0.15 : big * 0.92, -0.1 + row * 0.2);
+      else { bowlBase(s, k); if (k === 'bowl') s.scale.setScalar(BOWL_SCALE * 0.78); }
+      const big = k === 'bowl' ? 0.106 * BOWL_SCALE * 0.78 : k === 'bowlS' ? 0.066 : k === 'plate' ? 0.12 : 0;
+      // 立てて並べる（面を横に向け、列の中で少しずつ重なる）
+      if (k === 'mug') s.rotation.set(Math.PI, 0, 0); else s.rotation.set(0, 0, -1.36);
+      s.position.set(-0.242 + col * 0.088 + row * 0.044, k === 'mug' ? 0.15 : big * 0.94, -0.105 + row * 0.21);
       g.add(s);
     });
     return bakeGroup(g);
