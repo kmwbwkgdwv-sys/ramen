@@ -10,7 +10,7 @@ export const ANCHOR = {
   boilerY: 0.9,
   panY: 0.93, pans: (w) => { const out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; },
   rack: { ys: [0.12, 0.6, 1.08], xs: [-0.42, -0.14, 0.14, 0.42] },
-  sink: [0.25, 0.72, 0], dryRack: [-0.38, 0.895, -0.04], tareMix: [0.5, 0.9, 0.26], tarePots: [-0.3, 0.9, 0.28], passY: 1.06, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
+  sink: [0.25, 0.72, 0], dryRack: [-0.38, 0.895, -0.04], tareMix: [0.5, 0.9, 0.26], tarePots: [-0.3, 0.9, 0.28], passY: 1.06, workY: 0.86, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
 };
 
 const basicCache = new Map();
@@ -36,7 +36,7 @@ const glow = (c, i = 1) => mat(c, { e: c, ei: i, r: 0.4 });
 // 文字の板（ラベル）。z は前向きの面
 function label(g, text, w, h, x, y, z, o = {}) {
   const m = M(plane(w, h), basic(signTexture(text, { w: Math.round(256 * w / h), h: 256, radius: 24, ...o })), false);
-  m.position.set(x, y, z); if (o.ry) m.rotation.y = o.ry; if (o.rx) m.rotation.x = o.rx; g.add(m); return m;
+  m.position.set(x + Math.sin(o.ry || 0) * 0.002, y, z + Math.cos(o.ry || 0) * 0.002); if (o.ry) m.rotation.y = o.ry; if (o.rx) m.rotation.x = o.rx; g.add(m); return m;
 }
 // 液晶の小さな表示
 const lcdCache = new Map();
@@ -58,14 +58,14 @@ function legs(g, w, d, h, { inset = 0.05, shelf = 0.16, r = 0.019, mat: m = STEE
   }
   if (shelf) {
     add(g, T(box(w - inset * 2 + 0.05, 0.02, d - inset * 2 + 0.05), 0, shelf), STEEL());
-    add(g, T(box(w - inset * 2 + 0.05, 0.035, 0.012), 0, shelf - 0.015, d / 2 - inset + 0.025), STEEL());
-    add(g, T(box(w - inset * 2 + 0.05, 0.035, 0.012), 0, shelf - 0.015, -d / 2 + inset - 0.025), STEEL());
+    add(g, T(box(w - inset * 2 + 0.054, 0.038, 0.012), 0, shelf - 0.015, d / 2 - inset + 0.025), STEEL());
+    add(g, T(box(w - inset * 2 + 0.054, 0.038, 0.012), 0, shelf - 0.015, -d / 2 + inset - 0.025), STEEL());
   }
 }
 // 天板（前の縁を丸く折り返した作業台の板）と立ち上がり（バックガード）
 function worktop(g, w, d, y, { t = 0.035, splash = 0.1, holes = [], front = true } = {}) {
   add(g, T(slab(w, d, t, 0.006, holes), 0, y - t), STEEL());
-  if (front) add(g, T(rbox(w, 0.05, 0.025, 0.01), 0, y - 0.05, d / 2 - 0.006), STEEL());
+  if (front) add(g, T(rbox(w, 0.047, 0.025, 0.01), 0, y - 0.05, d / 2 - 0.006), STEEL());
   if (splash) {
     add(g, T(box(w, splash, 0.014), 0, y, -d / 2 + 0.007), STEEL());
     add(g, rod([-w / 2, y + splash, -d / 2 + 0.014], [w / 2, y + splash, -d / 2 + 0.014], 0.011, 10), STEEL());
@@ -125,7 +125,7 @@ export function sinkModel() {
   for (const s of [-1, 1]) add(g, T(rbox(0.018, 0.014, D - 0.03, 0.006), s * (W / 2 - 0.009), TOP, 0.01), STEEL());
   // 深いシンク（中が空洞の槽）と底・排水口
   add(g, T(ringRect(BW, BD, TOP - FLOOR + 0.02, 0.012, 0.05), sx, FLOOR - 0.02, sz), STEEL());
-  add(g, T(slab(BW, BD, 0.02, 0.05), sx, FLOOR - 0.02, sz), C(0xaab1b8, { r: 0.28, m: 0.8 }));
+  add(g, T(slab(BW - 0.004, BD - 0.004, 0.02, 0.05), sx, FLOOR - 0.022, sz), C(0xaab1b8, { r: 0.28, m: 0.8 }));
   const dx = sx + BW / 2 - 0.12, dz = sz - BD / 2 + 0.1;
   add(g, T(torus(0.042, 0.007, 6, 20), dx, FLOOR + 0.002, dz, Math.PI / 2), CHROME());
   add(g, T(cyl(0.038, 0.038, 0.003, 20), dx, FLOOR, dz), C(0x3a3d41, { r: 0.4, m: 0.6 }));
@@ -189,7 +189,7 @@ export function sinkModel() {
   add(g, T(sph(0.035, 10, 6), bx, TOP + 0.018, 0.18, 0, 0.4, 0, 1, 0.5, 1.4), C(0x8a6a3a, { r: 1 }));
   // ---- 下棚：洗い桶とバケツ ----
   add(g, T(ringRect(0.46, 0.34, 0.16, 0.01, 0.05), -0.3, 0.17, 0.02), C(0x2f6fd0, { r: 0.6 }));
-  add(g, T(slab(0.46, 0.34, 0.01, 0.05), -0.3, 0.17, 0.02), C(0x2f6fd0, { r: 0.6 }));
+  add(g, T(slab(0.454, 0.334, 0.01, 0.05), -0.3, 0.172, 0.02), C(0x2f6fd0, { r: 0.6 }));
   add(g, T(cyl(0.13, 0.11, 0.22, 18, true), 0.35, 0.17, 0.0), mat(0xf2f2ee, { r: 0.6, side: THREE.DoubleSide }));
   add(g, T(cyl(0.11, 0.11, 0.01, 18), 0.35, 0.17, 0.0), C(0xf2f2ee, { r: 0.6 }));
   add(g, T(torus(0.13, 0.008, 6, 20), 0.35, 0.39, 0.0, Math.PI / 2), C(0xf2f2ee, { r: 0.6 }));
@@ -217,7 +217,7 @@ export function stoveModel(def, A, opts = {}) {
   add(g, T(ringRect(W, D, 0.045, 0.04, 0.015), 0, TY - 0.045), STEEL());
   for (const sz of [-1, 1]) add(g, T(box(W - 0.06, 0.03, 0.03), 0, 0.12, sz * (D / 2 - 0.03)), STEEL());
   // 下の受け皿
-  add(g, T(slab(W - 0.1, D - 0.1, 0.008, 0.02), 0, 0.14), STEEL2());
+  add(g, T(slab(W - 0.11, D - 0.11, 0.008, 0.02), 0, 0.142), STEEL2());
   add(g, T(ringRect(W - 0.1, D - 0.1, 0.03, 0.008, 0.02), 0, 0.14), STEEL2());
   // バーナー（鋳物）と支え
   add(g, T(box(W - 0.06, 0.025, 0.05), 0, TY - 0.08), DARKSTEEL());
@@ -295,9 +295,9 @@ export function toppingModel() {
   add(g, T(slab(W - 0.06, 0.46, 0.02, 0.012, pans.map(([x, z]) => ({ x, z, w: 0.162, d: 0.162, r: 0.01 }))), 0, TOP, 0), STEEL());
   const pm = C(0x9aa0a6, { r: 0.35, m: 0.7 });
   for (const [x, z] of pans) {
-    add(g, T(box(0.148, 0.003, 0.148), x, TOP, z), pm);
+    add(g, T(box(0.144, 0.003, 0.144), x, TOP + 0.002, z), pm);
     add(g, T(ringRect(0.152, 0.152, 0.05, 0.003, 0.008), x, TOP, z), mat(0xe8ebee, { r: 0.3, m: 0.75, side: THREE.DoubleSide }));
-    add(g, T(ringRect(0.172, 0.172, 0.005, 0.012, 0.012), x, TOP + 0.045, z), CHROME());
+    add(g, T(ringRect(0.172, 0.172, 0.007, 0.012, 0.012), x, TOP + 0.046, z), CHROME());
   }
   // 道具掛け（おたま・トング・網じゃくし・菜箸）
   const ry = TOP + 0.2, rz = -D / 2 + 0.045;
@@ -351,30 +351,59 @@ export function boardModel() {
 }
 
 // ================= 業務用冷蔵庫（4ドア/6ドア・取っ手・温度表示） =================
-export function fridgeModel(def, cols) {
+export function fridgeModel(def, cols, open = false) {
   const g = new THREE.Group(), W = def.w, D = def.d, H = 1.92, K = 0.1, HD = 0.15;
-  add(g, T(rbox(W, H - K, D - 0.02, 0.012), 0, K, -0.01), STEEL2());
+  const dw = W / cols, y0 = K + 0.005, y1 = H - HD, mid = (y0 + y1) / 2 + 0.06, fz = D / 2 - 0.02;
+  const bodyM = STEEL2(), doorM = smat(surf('metal'), 0xf2f4f6, { r: 0.25, m: 0.7 });
+  if (!open) add(g, T(rbox(W, H - K, D - 0.02, 0.012), 0, K, -0.01), bodyM);
+  else {
+    // 扉を開けたとき：中が見える箱（背板・側板・天井・底）と白い内張り、ワイヤー棚
+    const t = 0.03, liner = C(0xeef2f5, { r: 0.5 }), wire = CHROME();
+    add(g, T(box(W - t * 2, H - K, t), 0, K, -D / 2 + t / 2), bodyM);
+    for (const sx of [-1, 1]) add(g, T(box(t, H - K, D - 0.02), sx * (W / 2 - t / 2), K, -0.01), bodyM);
+    add(g, T(box(W - t * 2, 0.04, D - 0.02), 0, y1 - 0.04, -0.01), bodyM);
+    add(g, T(box(W - t * 2, 0.03, D - 0.02), 0, K, -0.01), bodyM);
+    add(g, T(box(W - t * 2 - 0.004, y1 - K - 0.07, 0.006), 0, K + 0.03, -D / 2 + t + 0.003), liner);
+    for (const sx of [-1, 1]) add(g, T(box(0.006, y1 - K - 0.07, D - t - 0.05), sx * (W / 2 - t - 0.003), K + 0.03, 0.0), liner);
+    add(g, T(box(W - t * 2 - 0.01, 0.006, D - t - 0.06), 0, K + 0.03, 0.0), liner);
+    // 庫内灯
+    add(g, T(box(W * 0.6, 0.012, 0.05), 0, y1 - 0.055, -D / 2 + 0.12), mat(0xffffff, { e: 0xf4fbff, ei: 1.2 }));
+    // 扉と扉のあいだの柱
+    for (let c = 1; c < cols; c++) add(g, T(box(0.03, y1 - K - 0.04, 0.03), -W / 2 + dw * c, K + 0.03, fz - 0.02), bodyM);
+    // ワイヤー棚（ます目の高さ）
+    for (const y of [0.54, 0.94, 1.34]) {
+      add(g, T(box(W - t * 2 - 0.02, 0.008, D - 0.12), 0, y - 0.008, -0.02), C(0xd9dee3, { r: 0.3, m: 0.6 }));
+      add(g, T(box(W - t * 2 - 0.02, 0.018, 0.01), 0, y - 0.016, D / 2 - 0.078), wire);
+    }
+    add(g, T(box(W - t * 2 - 0.02, 0.008, D - 0.12), 0, 0.132, -0.02), C(0xd9dee3, { r: 0.3, m: 0.6 }));
+  }
   add(g, T(box(W - 0.04, K, D - 0.1), 0, 0, -0.04), DARKSTEEL());
   for (let i = 0; i < 4; i++) add(g, T(box(W - 0.12, 0.008, 0.01), 0, 0.02 + i * 0.02, D / 2 - 0.055), BLACK());
-  const dw = W / cols, y0 = K + 0.005, y1 = H - HD, mid = (y0 + y1) / 2 + 0.06, fz = D / 2 - 0.02;
   for (let c = 0; c < cols; c++) {
     const x = -W / 2 + dw * (c + 0.5), side = cols === 2 ? (c ? -1 : 1) : (c === 0 ? 1 : c === cols - 1 ? -1 : 1);
     for (const [a, b] of [[y0, mid], [mid, y1]]) {
-      add(g, T(rbox(dw - 0.016, b - a - 0.012, 0.035, 0.01), x, a + 0.006, fz), smat(surf('metal'), 0xf2f4f6, { r: 0.25, m: 0.7 }));
-      const hx = x + side * (dw / 2 - 0.06);
-      if (a === y0) barHandle(g, hx, b - 0.38, b - 0.06, fz + 0.045, 0.011); else barHandle(g, hx, a + 0.06, a + 0.38, fz + 0.045, 0.011);
+      // 扉：開けると蝶番（外側のふち）を軸に外へ開く
+      const door = new THREE.Group(), hx = c < cols / 2 ? -W / 2 + dw * c : -W / 2 + dw * (c + 1), dx = x - hx;
+      door.position.set(hx, 0, fz); g.add(door);
+      add(door, T(rbox(dw - 0.016, b - a - 0.012, 0.035, 0.01), dx, a + 0.006, 0), doorM);
+      if (open) add(door, T(box(dw - 0.06, b - a - 0.06, 0.006), dx, a + 0.03, -0.02), C(0xdfe5ea, { r: 0.5 }));
+      const hhx = dx + side * (dw / 2 - 0.06);
+      if (a === y0) barHandle(door, hhx, b - 0.38, b - 0.06, 0.045, 0.011); else barHandle(door, hhx, a + 0.06, a + 0.38, 0.045, 0.011);
+      if (open) door.rotation.y = c < cols / 2 ? -1.75 : 1.75;
     }
   }
   // 上の操作パネル（温度表示・ロゴ・吸気口）
   add(g, T(rbox(W - 0.01, HD - 0.02, 0.02, 0.006), 0, y1 + 0.01, D / 2 - 0.012), C(0x3a3f45, { r: 0.4, m: 0.4 }));
-  screen(g, '3.0℃', 0.16, 0.06, W / 2 - 0.15, y1 + 0.08, D / 2 + 0.0, { bg: '#06141f', fg: '#6fd3ff' });
+  screen(g, '3.0℃', 0.16, 0.06, W / 2 - 0.15, y1 + 0.08, D / 2 + 0.002, { bg: '#06141f', fg: '#6fd3ff' });
   label(g, '冷蔵庫', 0.2, 0.05, -W / 2 + 0.16, y1 + 0.08, D / 2 + 0.0, { bg: '#3a3f45', fg: '#ffffff' });
-  for (let i = 0; i < 6; i++) add(g, T(box(0.008, 0.07, 0.004), -0.1 + i * 0.03, y1 + 0.045, D / 2 + 0.0), BLACK());
-  // 扉の温度計
-  const tx = -W / 2 + dw / 2 - 0.1;
-  add(g, T(cyl(0.035, 0.035, 0.012, 20), tx, y1 - 0.12, fz + 0.035, Math.PI / 2), CHROME());
-  add(g, T(cyl(0.03, 0.03, 0.002, 20), tx, y1 - 0.12, fz + 0.048, Math.PI / 2), C(0xffffff, { r: 0.3 }));
-  add(g, T(box(0.003, 0.024, 0.002), tx, y1 - 0.12, fz + 0.05, 0, 0, -0.6), C(0xd62828));
+  for (let i = 0; i < 6; i++) add(g, T(box(0.008, 0.07, 0.006), -0.1 + i * 0.03, y1 + 0.045, D / 2 - 0.001), BLACK());
+  if (!open) {
+    // 扉の温度計
+    const tx = -W / 2 + dw / 2 - 0.1;
+    add(g, T(cyl(0.035, 0.035, 0.012, 20), tx, y1 - 0.12, fz + 0.035, Math.PI / 2), CHROME());
+    add(g, T(cyl(0.03, 0.03, 0.002, 20), tx, y1 - 0.12, fz + 0.048, Math.PI / 2), C(0xffffff, { r: 0.3 }));
+    add(g, T(box(0.003, 0.024, 0.002), tx, y1 - 0.12, fz + 0.05, 0, 0, -0.6), C(0xd62828));
+  }
   return g;
 }
 
@@ -403,7 +432,7 @@ export function dishrackModel() {
   const top = ys[ys.length - 1];
   add(g, T(rbox(0.74, 0.11, 0.012, 0.01), 0, top - 0.17, pz + 0.01), C(0x3a3f45, { r: 0.4 }));
   for (const s of [-1, 1]) add(g, rod([s * 0.3, top - 0.06, pz + 0.012], [s * 0.3, top - 0.004, pz], 0.003, 4), CHROME());
-  const lbl = M(plane(0.7, 0.095), basic(signTexture('🍜丼　🍚小丼　🍽️皿　🍺ジョッキ', { w: 768, h: 104, bg: '#3a3f45', fg: '#ffffff', radius: 10 })), false); lbl.position.set(0, top - 0.115, pz + 0.017); g.add(lbl);
+  const lbl = M(plane(0.7, 0.095), basic(signTexture('🍜丼　🍚小丼　🍽️皿　🍺ジョッキ', { w: 768, h: 104, bg: '#3a3f45', fg: '#ffffff', radius: 10 })), false); lbl.position.set(0, top - 0.115, pz + 0.019); g.add(lbl);
   // 一番上：割り箸の箱とキッチンペーパー
   add(g, T(rbox(0.42, 0.2, 0.3, 0.01), -0.28, top, 0), C(0xc9a26b, { r: 0.85 }));
   label(g, '割り箸', 0.2, 0.07, -0.28, top + 0.1, 0.151, { bg: '#c9a26b', fg: '#5a3a1a' });
@@ -414,6 +443,22 @@ export function dishrackModel() {
 // ================= 受け渡し台（木の台・ステンレス天板・保温ランプ・伝票レール・呼び鈴） =================
 let slipT = null;
 const slipTex = () => slipT ||= canvasTex(96, 144, (c, w, h) => { c.fillStyle = '#fffdf4'; c.fillRect(0, 0, w, h); c.fillStyle = '#c0392b'; c.fillRect(0, 0, w, 14); c.fillStyle = '#555'; for (let i = 0; i < 6; i++) c.fillRect(10, 28 + i * 18, 40 + (i * 17) % 36, 6); });
+// 作業台（ステンレスの台。下に棚）。上に何でも置ける
+export function worktableModel() {
+  const g = new THREE.Group(), d = FIXTURES.worktable, W = d.w, D = d.d, TOP = ANCHOR.workY;
+  add(g, T(slab(W, D, 0.03, 0.012), 0, TOP - 0.03), STEEL());
+  add(g, T(rbox(W - 0.004, 0.05, 0.022, 0.006), 0, TOP - 0.075, D / 2 - 0.013), STEEL2()); // 前のふち（天板の下）
+  add(g, T(rbox(W, 0.09, 0.024, 0.008), 0, TOP, -D / 2 + 0.012), STEEL2()); // 奥のバックガード
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const x = sx * (W / 2 - 0.05), z = sz * (D / 2 - 0.06);
+    add(g, T(cyl(0.019, 0.019, TOP - 0.06, 10), x, 0.03, z), CHROME());
+    add(g, T(cyl(0.024, 0.028, 0.03, 10), x, 0, z), DARKSTEEL()); // アジャスター
+  }
+  add(g, T(slab(W - 0.08, D - 0.1, 0.02, 0.01), 0, 0.2), STEEL2()); // 下の棚
+  // 置き場所の目印（うすい線）
+  for (let i = 1; i < d.slots; i++) add(g, T(box(0.006, 0.003, D - 0.12), -W / 2 + i * W / d.slots, TOP - 0.0005, 0.02), C(0xa9b0b7, { r: 0.4, m: 0.6 }));
+  return g;
+}
 export function passModel() {
   const g = new THREE.Group(), d = FIXTURES.pass, W = d.w, D = d.d, TOP = ANCHOR.passY;
   add(g, T(box(W - 0.06, 0.08, D - 0.08), 0, 0, -0.02), BLACK());
@@ -517,8 +562,8 @@ export function fryerModel() {
   // 天板と油槽
   const ow = W - 0.18, od = D - 0.26, oz = 0.02;
   add(g, T(slab(W, D, 0.03, 0.01, [{ x: 0, z: oz, w: ow, d: od, r: 0.03 }]), 0, TOP - 0.03), STEEL());
-  add(g, T(rbox(W, 0.04, 0.025, 0.01), 0, TOP - 0.045, D / 2 - 0.006), STEEL());
-  add(g, T(ringRect(ow, od, 0.14, 0.008, 0.03), 0, TOP - 0.14, oz), mat(0xb7bec4, { r: 0.35, m: 0.75, side: THREE.DoubleSide }));
+  add(g, T(rbox(W, 0.037, 0.025, 0.01), 0, TOP - 0.045, D / 2 - 0.006), STEEL());
+  add(g, T(ringRect(ow, od, 0.137, 0.008, 0.03), 0, TOP - 0.14, oz), mat(0xb7bec4, { r: 0.35, m: 0.75, side: THREE.DoubleSide }));
   add(g, T(slab(ow - 0.01, od - 0.01, 0.004, 0.03), 0, OIL - 0.004, oz), mat(0xd9a640, { r: 0.08, m: 0.2, e: 0x5a3a08, ei: 0.25 }));
   // 揚げかご（油の中）と取っ手
   wireBasket(g, 0.28, 0.2, 0.09, 0, OIL - 0.05, 0.05);
@@ -538,10 +583,10 @@ export function fryerModel() {
 // ================= ビールサーバー（台・ビール樽・ガスボンベ・注ぎ口） =================
 export function beerModel() {
   const g = new THREE.Group(), BY = 0.9;
-  for (const s of [-1, 1]) add(g, T(box(0.03, BY - 0.04, 0.58), s * 0.285, 0.04, 0), DWOOD());
+  for (const s of [-1, 1]) add(g, T(box(0.03, BY - 0.082, 0.58), s * 0.285, 0.04, 0), DWOOD());
   add(g, T(box(0.6, 0.04, 0.6), 0, 0, 0), BLACK());
   add(g, T(box(0.54, 0.03, 0.56), 0, 0.04, 0), DWOOD());
-  add(g, T(box(0.54, BY - 0.07, 0.02), 0, 0.07, -0.28), DWOOD());
+  add(g, T(box(0.54, BY - 0.112, 0.02), 0, 0.07, -0.28), DWOOD());
   add(g, T(rbox(0.62, 0.04, 0.62, 0.01), 0, BY - 0.04), C(0x3a2a1e, { r: 0.45 }));
   // ビール樽
   const kx = -0.07, kr = 0.15, kh = 0.46, keg = C(0xd4d8dc, { r: 0.25, m: 0.85 });
@@ -612,7 +657,7 @@ function chair(g, x, z, back) {
 export function tableModel(def) {
   const g = new THREE.Group(), tw = def.w - 0.1, td = def.seats.some(([, z]) => Math.abs(z) > 0.65) ? 0.85 : 0.75, TY = def.top;
   add(g, T(rbox(tw, 0.035, td, 0.008), 0, TY - 0.035), smat(surf('wood'), 0xd2a06a, { r: 0.4 }));
-  add(g, T(ringRect(tw + 0.008, td + 0.008, 0.035, 0.012, 0.012), 0, TY - 0.036), C(0x3a2416, { r: 0.4 }));
+  add(g, T(ringRect(tw + 0.008, td + 0.008, 0.034, 0.012, 0.012), 0, TY - 0.04), C(0x3a2416, { r: 0.4 }));
   add(g, T(box(tw - 0.16, 0.05, td - 0.16), 0, TY - 0.085), FRAME());
   // 脚（十字の足）
   const posts = tw > 1.2 ? [-tw / 4, tw / 4] : [0];
@@ -638,16 +683,16 @@ export function counterModel(def) {
   add(g, T(box(w, TY - 0.06, 0.05), 0, 0, PZ - 0.035), DWOOD());
   const n = Math.round(w / 0.1), sw = w / n;
   for (let i = 0; i < n; i++) add(g, T(box(sw - 0.012, TY - 0.24, 0.022), -w / 2 + sw * (i + 0.5), 0.1, PZ), smat(surf('wood'), i % 2 ? 0x8a5c3a : 0x7a5032, { r: 0.6 }));
-  add(g, T(box(w, 0.1, 0.05), 0, 0, PZ + 0.005), BLACK());
+  add(g, T(box(w - 0.004, 0.1, 0.05), 0, 0, PZ + 0.005), BLACK());
   add(g, T(box(w, 0.045, 0.035), 0, TY - 0.105, -0.1), DWOOD());
-  for (let i = 0; i <= Math.round(w / 1.2); i++) { const x = -w / 2 + 0.03 + i * (w - 0.06) / Math.round(w / 1.2); add(g, T(box(0.04, 0.05, 0.22), x, TY - 0.11, -0.2), DWOOD()); }
+  for (let i = 0; i <= Math.round(w / 1.2); i++) { const x = -w / 2 + 0.03 + i * (w - 0.06) / Math.round(w / 1.2); add(g, T(box(0.04, 0.047, 0.22), x, TY - 0.11, -0.2), DWOOD()); }
   // 足掛けのバー（座ったお客さんの足の下）
   add(g, rod([-w / 2 + 0.05, 0.17, -0.06], [w / 2 - 0.05, 0.17, -0.06], 0.016, 10), CHROME());
   for (let i = 0; i <= Math.round(w / 1.2); i++) { const x = -w / 2 + 0.1 + i * (w - 0.2) / Math.round(w / 1.2); add(g, rod([x, 0.17, PZ + 0.01], [x, 0.17, -0.06], 0.01, 6), CHROME()); }
   // 厨房側：台上げ（丼を置く一段高い棚）と下の作業棚
   add(g, T(box(w, 0.16, 0.08), 0, TY, -0.67), DWOOD());
   add(g, T(rbox(w, 0.025, 0.12, 0.006), 0, TY + 0.16, -0.665), STEEL());
-  add(g, T(box(w, 0.04, 0.34), 0, 0.78, -0.5), STEEL());
+  add(g, T(box(w - 0.006, 0.04, 0.34), 0, 0.78, -0.5), STEEL());
   add(g, T(box(w, 0.78, 0.04), 0, 0, -0.68), STEEL());
   // 調味料と箸箱（席の間）
   const xs = def.seats.map(([x]) => x);
@@ -805,7 +850,7 @@ export function zashikiModel(def, tatami) {
   const g = new THREE.Group(), W = def.w, D = def.d, H = 0.35;
   add(g, box(W, H - 0.03, D), DWOOD());
   add(g, T(box(W - 0.06, 0.03, D - 0.06), 0, H - 0.03), mat(0xffffff, { map: tatami, r: 0.85 }));
-  add(g, T(ringRect(W, D, 0.045, 0.06, 0.006), 0, H - 0.035), smat(surf('wood'), 0x4a2e1c, { r: 0.45 }));
+  add(g, T(ringRect(W + 0.006, D + 0.006, 0.045, 0.063, 0.006), 0, H - 0.035), smat(surf('wood'), 0x4a2e1c, { r: 0.45 }));
   add(g, T(box(W - 0.02, 0.06, 0.02), 0, 0.02, D / 2 + 0.001), C(0x1c1d20, { r: 0.6 }));
   // 座卓
   const TY = def.top, tw = W - 0.5; // 料理を置く高さと座卓の面をそろえる

@@ -6,7 +6,9 @@ export const CELL = 0.5;
 export const COL_W = 4;
 export const SHOP = { x0: -14, cols: 5 };
 export const SHOP_X1 = SHOP.x0 + SHOP.cols * COL_W; // 6
-export const BACK_Z = -7, FRONT_Z = 6, KITCHEN_Z = -3;
+// 厨房は奥行き8m（4人で動きまわれる広さ）・客席は奥行き9m
+export const BACK_Z = -11, FRONT_Z = 6, KITCHEN_Z = -3;
+export const LAYOUT_V = 2; // 厨房を広げた版（古いセーブの設備を奥の壁に合わせて動かす）
 export const START_COLS = [2, 3, 4];
 export const DOOR = { x: 0, z: FRONT_Z, half: 1.0 };
 export const BUILDING = { minX: SHOP.x0, maxX: SHOP_X1, minZ: BACK_Z, maxZ: FRONT_Z };
@@ -14,13 +16,14 @@ export const COUNTER_Z = KITCHEN_Z + 0.7; // カウンター（客席側にス�
 export const PASSAGE = { minX: 4.4, maxX: 6, minZ: KITCHEN_Z - 0.6, maxZ: KITCHEN_Z + 1.6 }; // 厨房への通り道（右はし）
 // となりの賭場（丁半・チンチロ・スロット）
 export const HALL = { x0: 9, x1: 17, z0: -3, z1: 6, door: [12.1, 13.9] };
-export const NAV_BOUNDS = { minX: -22, maxX: 24, minZ: -12, maxZ: 14 };
-export const PLAYER_BOUNDS = { minX: -23, maxX: 25, minZ: -13, maxZ: 16 };
+export const NAV_BOUNDS = { minX: -22, maxX: 24, minZ: BACK_Z - 5, maxZ: 14 };
+export const PLAYER_BOUNDS = { minX: -23, maxX: 25, minZ: BACK_Z - 6, maxZ: 16 };
 export const SPAWN_POINTS = [[-21, 8.0], [23, 8.0], [-21, 7.3], [23, 7.3]];
 export const PLAYER_SPAWN = [3.2, -4.6];
 export const STAFF_HOME = [5.2, -4.6];
-export const DRONE_PAD = [4.5, -8.6]; // 勝手口の外：ドローンが食材を届ける
-export const CRATE_AREA = { minX: -10, maxX: -3, minZ: 10.8, maxZ: 13.8 }; // 買った設備（大きい段ボール）が届く所
+export const DRONE_PAD = [4.5, BACK_Z - 1.6]; // 勝手口の外：ドローンが食材を届ける
+export const CRATE_AREA = { minX: -3.4, maxX: 3.1, minZ: BACK_Z - 4.4, maxZ: BACK_Z - 0.9 }; // 注文した食材・買った設備の段ボールが届く所（勝手口を出たところ）
+export const BACK_DOOR = { x0: 3.9, x1: 5.1 }; // 勝手口（通れる）
 export const OPEN_TIME = 10 * 60;
 export const CLOSE_TIME = 23 * 60;
 export const GAME_MIN_PER_SEC = 1.7;
@@ -70,7 +73,7 @@ export function getWalls(store) {
   const V = (z0, z1, x, type) => { if (z1 - z0 > 0.01) w.push({ minX: x - T, maxX: x + T, minZ: z0, maxZ: z1, type, axis: 'z' }); };
   const L = BUILDING.minX, R = BUILDING.maxX;
   H(L, DOOR.x - DOOR.half, FRONT_Z, 'front'); H(DOOR.x + DOOR.half, R, FRONT_Z, 'front');
-  V(BACK_Z, FRONT_Z, L, 'outer'); V(BACK_Z, FRONT_Z, R, 'outer'); H(L, R, BACK_Z, 'outer');
+  V(BACK_Z, FRONT_Z, L, 'outer'); V(BACK_Z, FRONT_Z, R, 'outer'); H(L, BACK_DOOR.x0, BACK_Z, 'outer'); H(BACK_DOOR.x1, R, BACK_Z, 'outer');
   // 未購入の列との境目
   const own = ownCols(store);
   for (const c of own) {
@@ -139,19 +142,19 @@ export function noodleLabel(sec) {
 }
 // トッピング：raw（仕入れる食材）を、まな板で仕込むと per 人前になる
 export const TOPPINGS = {
-  negi: { name: 'ネギ', icon: '🌿', color: '#69b33f', lv: 1, raw: 'negi', per: 20, prep: 2.4, val: 30 },
-  chashu: { name: 'チャーシュー', icon: '🥩', color: '#b9744a', lv: 1, raw: 'chashu', per: 10, prep: 3.2, val: 150 },
-  menma: { name: 'メンマ', icon: '🎋', color: '#c99a4e', lv: 1, raw: 'menma', per: 20, prep: 1.6, val: 40 },
-  nori: { name: '海苔', icon: '⬛', color: '#1d2a20', lv: 2, raw: 'nori', per: 30, prep: 1.2, val: 30 },
-  ajitama: { name: '味玉', icon: '🥚', color: '#f0a52a', lv: 4, raw: 'ajitama', per: 10, prep: 2.8, val: 100 },
-  moyashi: { name: 'もやし', icon: '🌱', color: '#f2efd8', lv: 5, raw: 'moyashi', per: 15, prep: 1.6, val: 30 },
-  corn: { name: 'コーン', icon: '🌽', color: '#f6cf2c', lv: 7, raw: 'corn', per: 20, prep: 1.0, val: 50 },
-  butter: { name: 'バター', icon: '🧈', color: '#fbe38b', lv: 8, raw: 'butter', per: 20, prep: 1.0, val: 60 },
-  naruto: { name: 'なると', icon: '🍥', color: '#ffffff', lv: 11, raw: 'naruto', per: 20, prep: 1.8, val: 40 },
-  spinach: { name: 'ほうれん草', icon: '🥬', color: '#2f7d32', lv: 14, raw: 'spinach', per: 15, prep: 2.2, val: 40 },
-  seabura: { name: '背脂', icon: '🤍', color: '#f7f3ea', lv: 18, raw: 'seabura', per: 20, prep: 1.4, val: 50 },
-  karamiso: { name: '辛味噌', icon: '🌶️', color: '#c62828', lv: 20, raw: 'karamiso', per: 20, prep: 1.4, val: 60 },
-  kikurage: { name: 'きくらげ', icon: '🍄', color: '#3b2a24', lv: 26, raw: 'kikurage', per: 20, prep: 1.6, val: 50 },
+  negi: { name: 'ネギ', icon: '🌿', color: '#69b33f', lv: 1, raw: 'negi', per: 5, prep: 2.4, val: 30 },
+  chashu: { name: 'チャーシュー', icon: '🥩', color: '#b9744a', lv: 1, raw: 'chashu', per: 5, prep: 3.2, val: 150 },
+  menma: { name: 'メンマ', icon: '🎋', color: '#c99a4e', lv: 1, raw: 'menma', per: 5, prep: 1.6, val: 40 },
+  nori: { name: '海苔', icon: '⬛', color: '#1d2a20', lv: 2, raw: 'nori', per: 5, prep: 1.2, val: 30 },
+  ajitama: { name: '味玉', icon: '🥚', color: '#f0a52a', lv: 4, raw: 'ajitama', per: 5, prep: 2.8, val: 100 },
+  moyashi: { name: 'もやし', icon: '🌱', color: '#f2efd8', lv: 5, raw: 'moyashi', per: 5, prep: 1.6, val: 30 },
+  corn: { name: 'コーン', icon: '🌽', color: '#f6cf2c', lv: 7, raw: 'corn', per: 5, prep: 1.0, val: 50 },
+  butter: { name: 'バター', icon: '🧈', color: '#fbe38b', lv: 8, raw: 'butter', per: 5, prep: 1.0, val: 60 },
+  naruto: { name: 'なると', icon: '🍥', color: '#ffffff', lv: 11, raw: 'naruto', per: 5, prep: 1.8, val: 40 },
+  spinach: { name: 'ほうれん草', icon: '🥬', color: '#2f7d32', lv: 14, raw: 'spinach', per: 5, prep: 2.2, val: 40 },
+  seabura: { name: '背脂', icon: '🤍', color: '#f7f3ea', lv: 18, raw: 'seabura', per: 5, prep: 1.4, val: 50 },
+  karamiso: { name: '辛味噌', icon: '🌶️', color: '#c62828', lv: 20, raw: 'karamiso', per: 5, prep: 1.4, val: 60 },
+  kikurage: { name: 'きくらげ', icon: '🍄', color: '#3b2a24', lv: 26, raw: 'kikurage', per: 5, prep: 1.6, val: 50 },
 };
 // サイドメニュー
 export const SIDES = {
@@ -226,19 +229,19 @@ export const INGREDIENTS = {
   t_miso: I({ name: '合わせ味噌', icon: '🟠', cat: 'tare', unit: '樽', pack: 1, cost: 1200, lv: 6, tare: 'miso' }),
   t_goma: I({ name: '練りごま・ラー油', icon: '🌶️', cat: 'tare', unit: 'セット', pack: 1, cost: 1800, lv: 22, tare: 'goma' }),
   t_black: I({ name: 'たまり醤油', icon: '⚫', cat: 'tare', unit: '本', pack: 1, cost: 1500, lv: 40, tare: 'black' }),
-  negi: I({ name: '長ねぎ', icon: '🌿', cat: 'top', unit: '束', pack: 3, cost: 600, lv: 1 }),
-  chashu: I({ name: '豚バラ肉（煮豚用）', icon: '🥩', cat: 'top', unit: '本', pack: 2, cost: 2400, lv: 1 }),
-  menma: I({ name: 'メンマ', icon: '🎋', cat: 'top', unit: '袋', pack: 2, cost: 900, lv: 1 }),
-  nori: I({ name: '焼き海苔', icon: '⬛', cat: 'top', unit: '束', pack: 2, cost: 700, lv: 2 }),
-  ajitama: I({ name: '卵（10個）', icon: '🥚', cat: 'top', unit: 'パック', pack: 2, cost: 600, lv: 4 }),
-  moyashi: I({ name: 'もやし', icon: '🌱', cat: 'top', unit: '袋', pack: 4, cost: 400, lv: 5 }),
-  corn: I({ name: 'コーン缶', icon: '🌽', cat: 'top', unit: '缶', pack: 2, cost: 600, lv: 7 }),
-  butter: I({ name: 'バター', icon: '🧈', cat: 'top', unit: '箱', pack: 1, cost: 900, lv: 8 }),
-  naruto: I({ name: 'なると', icon: '🍥', cat: 'top', unit: '本', pack: 2, cost: 600, lv: 11 }),
-  spinach: I({ name: 'ほうれん草', icon: '🥬', cat: 'top', unit: '束', pack: 3, cost: 700, lv: 14 }),
-  seabura: I({ name: '背脂', icon: '🤍', cat: 'top', unit: '袋', pack: 1, cost: 1000, lv: 18 }),
-  karamiso: I({ name: '辛味噌', icon: '🌶️', cat: 'top', unit: 'パック', pack: 1, cost: 1200, lv: 20 }),
-  kikurage: I({ name: 'きくらげ', icon: '🍄', cat: 'top', unit: '袋', pack: 1, cost: 1000, lv: 26 }),
+  negi: I({ name: '長ねぎ', icon: '🌿', cat: 'top', unit: '束', pack: 12, cost: 600, lv: 1 }),
+  chashu: I({ name: '豚バラ肉（煮豚用）', icon: '🥩', cat: 'top', unit: '本', pack: 4, cost: 2400, lv: 1 }),
+  menma: I({ name: 'メンマ', icon: '🎋', cat: 'top', unit: '袋', pack: 8, cost: 900, lv: 1 }),
+  nori: I({ name: '焼き海苔', icon: '⬛', cat: 'top', unit: '束', pack: 12, cost: 700, lv: 2 }),
+  ajitama: I({ name: '味付け卵', icon: '🥚', cat: 'top', unit: 'パック', pack: 4, cost: 600, lv: 4 }),
+  moyashi: I({ name: 'もやし', icon: '🌱', cat: 'top', unit: '袋', pack: 12, cost: 400, lv: 5 }),
+  corn: I({ name: 'コーン缶', icon: '🌽', cat: 'top', unit: '缶', pack: 8, cost: 600, lv: 7 }),
+  butter: I({ name: 'バター', icon: '🧈', cat: 'top', unit: '箱', pack: 4, cost: 900, lv: 8 }),
+  naruto: I({ name: 'なると', icon: '🍥', cat: 'top', unit: '本', pack: 8, cost: 600, lv: 11 }),
+  spinach: I({ name: 'ほうれん草', icon: '🥬', cat: 'top', unit: '束', pack: 9, cost: 700, lv: 14 }),
+  seabura: I({ name: '背脂', icon: '🤍', cat: 'top', unit: '袋', pack: 4, cost: 1000, lv: 18 }),
+  karamiso: I({ name: '辛味噌', icon: '🌶️', cat: 'top', unit: 'パック', pack: 4, cost: 1200, lv: 20 }),
+  kikurage: I({ name: 'きくらげ', icon: '🍄', cat: 'top', unit: '袋', pack: 4, cost: 1000, lv: 26 }),
   kome: I({ name: '米（20杯分）', icon: '🌾', cat: 'side', unit: '袋', pack: 1, cost: 1600, lv: 2 }),
   gyozaF: I({ name: '冷凍餃子（30個）', icon: '🥟', cat: 'side', unit: '個', pack: 30, cost: 1800, lv: 4 }),
   taru: I({ name: 'ビール樽（20杯）', icon: '🛢️', cat: 'side', unit: '樽', pack: 1, cost: 5000, lv: 6 }),
@@ -278,28 +281,30 @@ export const MENU_RAMEN_MAX = (lv) => 3 + Math.floor((lv || 1) / 8);
 export const TOP_MAX = 6; // 1杯にのせられるトッピングの種類
 
 // ---------- 設備 ----------
-// place: kitchen=厨房, dining=客席, any=店内ならどこでも / seats: 座席 [x, z]（ローカル） / spots: 料理を置く位置 [x, z]
+// place: dining=お客さんが入れる客席側だけ（席・券売機など）, any=店内ならどこでも（厨房の設備も好きな所に置ける）
+// keep: 動かせるけど売り買いはできない（パソコン・レジ・札） / seats: 座席 [x, z]（ローカル） / spots: 料理を置く位置 [x, z]
 const F = (o) => ({ place: 'any', ...o });
 const stools = (n, w) => Array.from({ length: n }, (_, i) => [-w / 2 + (i + 0.5) * w / n, 0.38]);
 const tops = (n, w) => Array.from({ length: n }, (_, i) => [-w / 2 + (i + 0.5) * w / n, -0.36]);
 export const FIXTURES = {
   // ---- 厨房 ----
-  pot: F({ name: '寸胴鍋とコンロ', cat: 'kitchen', icon: '🍲', price: 12000, w: 0.9, d: 0.8, place: 'kitchen', lv: 1, pot: { sv: 20 }, fireRisk: 1, desc: 'だしを炊く。水を入れて、鶏ガラ・豚骨などと香味野菜を入れ、火にかける。出てきたアクを取るとすっきりする（20杯分）' }),
-  pot2: F({ name: '大寸胴鍋', cat: 'kitchen', icon: '🍲', price: 32000, w: 1.1, d: 0.9, place: 'kitchen', lv: 15, pot: { sv: 40 }, fireRisk: 1, desc: '大きな寸胴鍋。材料を多く入れると1回で40杯分のだしが炊ける' }),
-  boiler: F({ name: '茹で麺機（4てぼ）', cat: 'kitchen', icon: '♨️', price: 15000, w: 1.0, d: 0.8, place: 'kitchen', lv: 1, baskets: 4, desc: '麺を茹でる。てぼを入れてからの秒数で、かため・ふつう・やわらかめが決まる' }),
-  boiler6: F({ name: '茹で麺機（6てぼ）', cat: 'kitchen', icon: '♨️', price: 38000, w: 1.4, d: 0.8, place: 'kitchen', lv: 18, baskets: 6, desc: '6つのてぼを同時に茹でられる大型の茹で麺機' }),
-  topping: F({ name: 'トッピング台', cat: 'kitchen', icon: '🥢', price: 8000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, topping: true, desc: 'タレ（かえし）を作って丼に入れる・仕込んだトッピングをのせる台' }),
-  board: F({ name: 'まな板（仕込み台）', cat: 'kitchen', icon: '🔪', price: 5000, w: 1.2, d: 0.7, place: 'kitchen', lv: 1, board: true, desc: '冷蔵庫の食材を切って、トッピングを仕込む' }),
-  fridge: F({ name: '業務用冷蔵庫', cat: 'kitchen', icon: '🧊', price: 15000, w: 1.2, d: 0.8, place: 'kitchen', lv: 1, cap: 40, desc: '届いた食材をしまっておく（40パック分）。ドローンで届いた食材は自動でここに入る' }),
-  fridge2: F({ name: '大型冷蔵庫', cat: 'kitchen', icon: '🧊', price: 42000, w: 1.8, d: 0.8, place: 'kitchen', lv: 12, cap: 100, desc: '大きな冷蔵庫（100パック分）' }),
-  dishrack: F({ name: '食器棚', cat: 'kitchen', icon: '🍽️', price: 6000, w: 1.2, d: 0.5, place: 'kitchen', lv: 1, rack: true, desc: 'きれいな丼・皿・ジョッキを取る' }),
-  sink: F({ name: '洗い場', cat: 'kitchen', icon: '🚰', price: 9000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, sink: true, desc: '下げた食器をシンクに入れて1つずつ洗う（長押し）→ 水切りかごに並ぶ → 食器棚にしまう' }),
+  pot: F({ name: '寸胴鍋とコンロ', cat: 'kitchen', icon: '🍲', price: 12000, w: 0.9, d: 0.8, lv: 1, pot: { sv: 20 }, fireRisk: 1, desc: 'だしを炊く。水を入れて、鶏ガラ・豚骨などと香味野菜を入れ、火にかける。出てきたアクを取るとすっきりする（20杯分）' }),
+  pot2: F({ name: '大寸胴鍋', cat: 'kitchen', icon: '🍲', price: 32000, w: 1.1, d: 0.9, lv: 15, pot: { sv: 40 }, fireRisk: 1, desc: '大きな寸胴鍋。材料を多く入れると1回で40杯分のだしが炊ける' }),
+  boiler: F({ name: '茹で麺機（4てぼ）', cat: 'kitchen', icon: '♨️', price: 15000, w: 1.0, d: 0.8, lv: 1, baskets: 4, desc: '麺を茹でる。てぼを入れてからの秒数で、かため・ふつう・やわらかめが決まる' }),
+  boiler6: F({ name: '茹で麺機（6てぼ）', cat: 'kitchen', icon: '♨️', price: 38000, w: 1.4, d: 0.8, lv: 18, baskets: 6, desc: '6つのてぼを同時に茹でられる大型の茹で麺機' }),
+  topping: F({ name: 'トッピング台', cat: 'kitchen', icon: '🥢', price: 8000, w: 1.4, d: 0.7, lv: 1, topping: true, desc: 'タレ（かえし）を作って丼に入れる・仕込んだトッピングをのせる台' }),
+  board: F({ name: 'まな板（仕込み台）', cat: 'kitchen', icon: '🔪', price: 5000, w: 1.2, d: 0.7, lv: 1, board: true, desc: '冷蔵庫の食材を切って、トッピングを仕込む' }),
+  fridge: F({ name: '業務用冷蔵庫（2ドア）', cat: 'kitchen', icon: '🧊', price: 15000, w: 1.2, d: 0.8, lv: 1, cap: 40, desc: '扉を開けて、棚の食材・仕込んだトッピング・スープの容器を自分で取る（40パック分）。届いた食材は段ボールから自分で運んで入れる。冷蔵庫の中の物は次の日に持ち越せる' }),
+  fridge2: F({ name: '大型冷蔵庫（4ドア）', cat: 'kitchen', icon: '🧊', price: 30000, w: 1.8, d: 0.8, lv: 1, cap: 100, desc: '背の高い4ドアの業務用冷蔵庫（100パック分）。扉を開けると棚に中身が並ぶので、ほしい物を狙って取る。作ったスープの容器や仕込んだトッピングを入れておけば次の日に持ち越せる' }),
+  dishrack: F({ name: '食器棚', cat: 'kitchen', icon: '🍽️', price: 6000, w: 1.2, d: 0.5, lv: 1, rack: true, desc: 'きれいな丼・皿・ジョッキを取る' }),
+  sink: F({ name: '洗い場', cat: 'kitchen', icon: '🚰', price: 9000, w: 1.4, d: 0.7, lv: 1, sink: true, desc: '下げた食器をシンクに入れて1つずつ洗う（長押し）→ 水切りかごに並ぶ → 食器棚にしまう' }),
+  worktable: F({ name: '作業台', cat: 'kitchen', icon: '🧰', price: 4000, w: 1.6, d: 0.7, lv: 1, slots: 4, desc: '丼・食材・食器・鍋など、手に持っている物を何でも置いておける台（4か所）。丼を置いて麺を取りに行ける' }),
   pass: F({ name: '受け渡し台', cat: 'kitchen', icon: '🛎️', price: 5000, w: 1.2, d: 0.6, place: 'any', lv: 1, pass: 4, desc: 'できた料理を置いておくと、接客のアルバイトがお客さんに運ぶ' }),
   // ---- サイドメニュー ----
-  rice: F({ name: '炊飯器', cat: 'side', icon: '🍚', price: 6000, w: 0.6, d: 0.6, place: 'kitchen', lv: 2, rice: { sv: 20 }, desc: '米を入れて炊く（25秒で20杯分）。ライス・チャーシュー丼に使う' }),
-  gyoza: F({ name: '餃子焼き器', cat: 'side', icon: '🥟', price: 14000, w: 0.9, d: 0.7, place: 'kitchen', lv: 4, griddle: 'gyoza', fireRisk: 1, desc: '餃子を6個ずつ焼く。焼きすぎると焦げて、さらに放っておくと火が出る' }),
+  rice: F({ name: '炊飯器', cat: 'side', icon: '🍚', price: 6000, w: 0.6, d: 0.6, lv: 2, rice: { sv: 20 }, desc: '米を入れて炊く（25秒で20杯分）。ライス・チャーシュー丼に使う' }),
+  gyoza: F({ name: '餃子焼き器', cat: 'side', icon: '🥟', price: 14000, w: 0.9, d: 0.7, lv: 4, griddle: 'gyoza', fireRisk: 1, desc: '餃子を6個ずつ焼く。焼きすぎると焦げて、さらに放っておくと火が出る' }),
   beer: F({ name: 'ビールサーバー', cat: 'side', icon: '🍺', price: 16000, w: 0.6, d: 0.6, place: 'any', lv: 6, beer: true, desc: 'ジョッキを持って長押しで注ぐ。泡が7:3くらいで止めるとおいしい' }),
-  fryer: F({ name: 'フライヤー', cat: 'side', icon: '🍗', price: 22000, w: 0.8, d: 0.7, place: 'kitchen', lv: 14, griddle: 'karaage', fireRisk: 1, desc: '唐揚げを4個ずつ揚げる。揚げすぎ注意（火が出る）' }),
+  fryer: F({ name: 'フライヤー', cat: 'side', icon: '🍗', price: 22000, w: 0.8, d: 0.7, lv: 14, griddle: 'karaage', fireRisk: 1, desc: '唐揚げを4個ずつ揚げる。揚げすぎ注意（火が出る）' }),
   // ---- 客席 ----
   table2: F({ name: 'テーブル席（2人）', cat: 'seat', icon: '🪑', price: 9000, w: 1.0, d: 1.7, place: 'dining', lv: 1, seats: [[0, 0.62], [0, -0.62]], spots: [[0, 0.18], [0, -0.18]], top: 0.74, desc: '向かい合わせの2人席' }),
   table4: F({ name: 'テーブル席（4人）', cat: 'seat', icon: '🪑', price: 20000, w: 1.6, d: 1.8, place: 'dining', lv: 7, seats: [[-0.4, 0.68], [0.4, 0.68], [-0.4, -0.68], [0.4, -0.68]], spots: [[-0.4, 0.2], [0.4, 0.2], [-0.4, -0.2], [0.4, -0.2]], top: 0.74, desc: '4人で座れるテーブル席' }),
@@ -314,23 +319,23 @@ export const FIXTURES = {
   turret: F({ name: '警備タレット', cat: 'safety', icon: '🛡️', price: 60000, w: 0.6, d: 0.6, place: 'any', lv: 20, turret: { range: 7.5, cd: 1.4 }, desc: '近くに来た泥棒に自動で手裏剣を撃つ' }),
   // ---- 装飾 ----
   plant: F({ name: '観葉植物', cat: 'deco', icon: '🪴', price: 1500, w: 0.5, d: 0.5, place: 'any', lv: 1, desc: '店内に緑を' }),
-  maneki: F({ name: '招き猫', cat: 'deco', icon: '🐱', price: 5000, w: 0.5, d: 0.5, place: 'dining', lv: 2, attract: 0.03, desc: 'お客さんを招く（少しお客さんが増える）' }),
+  maneki: F({ name: '招き猫', cat: 'deco', icon: '🐱', price: 5000, w: 0.5, d: 0.5, lv: 2, attract: 0.03, desc: 'お客さんを招く（少しお客さんが増える）' }),
   chochin: F({ name: '赤ちょうちん', cat: 'deco', icon: '🏮', price: 3000, w: 0.5, d: 0.5, place: 'any', lv: 3, air: true, desc: '天井から吊るす赤い提灯（下を通れる）' }),
-  tanuki: F({ name: '信楽焼のたぬき', cat: 'deco', icon: '🦝', price: 7000, w: 0.6, d: 0.6, place: 'dining', lv: 8, attract: 0.02, desc: '縁起ものの大きなたぬき' }),
+  tanuki: F({ name: '信楽焼のたぬき', cat: 'deco', icon: '🦝', price: 7000, w: 0.6, d: 0.6, lv: 8, attract: 0.02, desc: '縁起ものの大きなたぬき' }),
   kamidana: F({ name: '神棚', cat: 'deco', icon: '⛩️', price: 12000, w: 1.0, d: 0.4, place: 'any', lv: 10, attract: 0.03, desc: '商売繁盛を祈る神棚' }),
   kumade: F({ name: '熊手', cat: 'deco', icon: '🎋', price: 15000, w: 0.8, d: 0.3, place: 'any', lv: 15, attract: 0.03, desc: '福をかき集める縁起物（お客さんが増える）' }),
-  aquarium: F({ name: '金魚の水槽', cat: 'deco', icon: '🐠', price: 25000, w: 1.2, d: 0.5, place: 'dining', lv: 28, attract: 0.04, desc: '泳ぐ金魚で癒やしの空間に' }),
+  aquarium: F({ name: '金魚の水槽', cat: 'deco', icon: '🐠', price: 25000, w: 1.2, d: 0.5, lv: 28, attract: 0.04, desc: '泳ぐ金魚で癒やしの空間に' }),
   // ---- 看板 ----
   signstand: F({ name: '立て看板', cat: 'sign', icon: '🪧', price: 2000, w: 0.5, d: 0.5, place: 'any', lv: 1, text: true, desc: '好きな文字を書ける黒板看板' }),
   nobori: F({ name: 'のぼり旗', cat: 'sign', icon: '🎏', price: 2500, w: 0.5, d: 0.5, place: 'any', lv: 4, text: true, desc: '「ラーメン」などの文字ののぼり旗' }),
   menuboard: F({ name: 'お品書き', cat: 'sign', icon: '📜', price: 3500, w: 1.0, d: 0.3, place: 'any', lv: 2, desc: '今日のメニューと値段を書いた木の札（自動で書きかわる）' }),
   neon: F({ name: 'ネオン看板', cat: 'sign', icon: '💡', price: 6000, w: 1.0, d: 0.5, place: 'any', lv: 12, text: true, desc: '光る文字の看板' }),
   // ---- 固定（建物の一部） ----
-  counter: F({ name: 'カウンター席', cat: 'fixed', icon: '🍥', price: 0, w: 4, d: 1.4, fixed: true, seats: stools(4, 4), spots: tops(4, 4), top: 0.95, desc: '厨房と客席の間のカウンター' }),
-  counter2: F({ name: 'カウンター席', cat: 'fixed', icon: '🍥', price: 0, w: 2.4, d: 1.4, fixed: true, seats: stools(2, 2.4), spots: tops(2, 2.4), top: 0.95, desc: '厨房と客席の間のカウンター' }),
-  pc: F({ name: 'パソコン', cat: 'fixed', icon: '💻', price: 0, w: 1.6, d: 0.8, fixed: true, desc: '仕入れ・メニュー・アルバイト・お店の設定' }),
-  register: F({ name: 'レジ', cat: 'fixed', icon: '💴', price: 0, w: 0.9, d: 0.6, fixed: true, place: 'dining', desc: '売上金が入っている。泥棒に注意。賭場に行くときは、ここを開けてお金をつかんでいく' }),
-  opensign: F({ name: 'のれん掛けの札', cat: 'fixed', icon: '🪧', price: 0, w: 0.6, d: 0.5, fixed: true, desc: '「営業中」にするとお客さんが来る' }),
+  counter: F({ name: 'カウンター席（4人）', cat: 'seat', icon: '🍥', price: 16000, w: 4, d: 1.4, place: 'dining', lv: 1, seats: stools(4, 4), spots: tops(4, 4), top: 0.95, desc: 'スツールが4つのカウンター。好きな所に置ける（スツール側がお客さん）' }),
+  counter2: F({ name: 'カウンター席（2人）', cat: 'seat', icon: '🍥', price: 10000, w: 2.4, d: 1.4, place: 'dining', lv: 1, seats: stools(2, 2.4), spots: tops(2, 2.4), top: 0.95, desc: 'スツールが2つの短いカウンター' }),
+  pc: F({ name: 'パソコン', cat: 'fixed', icon: '💻', price: 0, w: 1.6, d: 0.8, keep: true, desc: '仕入れ・メニュー・アルバイト・お店の設定' }),
+  register: F({ name: 'レジ', cat: 'fixed', icon: '💴', price: 0, w: 0.9, d: 0.6, keep: true, place: 'dining', desc: '売上金が入っている。泥棒に注意。賭場に行くときは、ここを開けてお金をつかんでいく' }),
+  opensign: F({ name: 'のれん掛けの札', cat: 'fixed', icon: '🪧', price: 0, w: 0.6, d: 0.5, keep: true, desc: '「営業中」にするとお客さんが来る' }),
   chohan: F({ name: '丁半の盆', cat: 'fixed', icon: '🎲', price: 0, w: 3.0, d: 1.8, fixed: true, gamble: 'chohan', desc: '壺振りがサイコロ2つを振る。合計が偶数なら丁、奇数なら半' }),
   chinchiro: F({ name: 'チンチロの卓', cat: 'fixed', icon: '🥣', price: 0, w: 1.6, d: 1.6, fixed: true, gamble: 'chinchiro', desc: 'どんぶりにサイコロ3つ。親（胴元）と役の強さで勝負' }),
   slot: F({ name: 'スロット台', cat: 'fixed', icon: '🎰', price: 0, w: 0.8, d: 0.7, fixed: true, gamble: 'slot', desc: '3つのリールをそろえよう' }),
@@ -385,6 +390,10 @@ export function pickBasket(type, lx, lz) {
   return best;
 }
 export function passPos(type, i) { const n = FIXTURES[type].pass, w = FIXTURES[type].w; return [-w / 2 + (i + 0.5) * w / n, 0]; }
+// 作業台：何でも置ける場所
+export function slotPos(type, i) { const n = FIXTURES[type].slots, w = FIXTURES[type].w; return [-w / 2 + (i + 0.5) * w / n, 0]; }
+export function pickSlot(type, lx) { const n = FIXTURES[type].slots || 0, w = FIXTURES[type].w; return Math.max(0, Math.min(n - 1, Math.floor((lx + w / 2) / (w / n)))); }
+export const SLOT_OK = { dish: 1, dirty: 1, clean: 1, ing: 1, pot: 1, top: 1, keep: 1, pack: 1 }; // 作業台に置ける物（お金・道具はだめ）
 export function pickPass(type, lx) { const n = FIXTURES[type].pass || 0, w = FIXTURES[type].w; return Math.max(0, Math.min(n - 1, Math.floor((lx + w / 2) / (w / n)))); }
 // 券売機：お客さんが立つ場所と並ぶ列
 export function ticketSpot(f, i) { return localToWorld(f, 0, 0.62 + Math.max(0, i) * 0.72); }
@@ -451,14 +460,14 @@ export function xpNeed(level) {
 }
 export const TICKET_LV = [[12, 2], [28, 3]];
 export function ticketLimit(level) { let n = 1; for (const [l, k] of TICKET_LV) if ((level || 1) >= l) n = k; return n; }
-export function fixtureUnlocked(t, level) { const f = FIXTURES[t]; return !!f && !f.fixed && (level || 1) >= (f.lv || 1); }
+export function fixtureUnlocked(t, level) { const f = FIXTURES[t]; return !!f && !f.fixed && !f.keep && (level || 1) >= (f.lv || 1); }
 export function unlocksAt(lv) {
   const out = [];
   if (lv <= 1) return out;
   for (const [k, s] of Object.entries(SOUPS)) if (s.lv === lv) out.push({ k: 'soup', icon: s.icon, name: `${s.name}スープ` });
   for (const [, t] of Object.entries(TOPPINGS)) if (t.lv === lv) out.push({ k: 'top', icon: t.icon, name: `トッピング「${t.name}」` });
   for (const [, s] of Object.entries(SIDES)) if (s.lv === lv) out.push({ k: 'side', icon: s.icon, name: `サイド「${s.name}」` });
-  for (const [, f] of Object.entries(FIXTURES)) if (!f.fixed && f.lv === lv) out.push({ k: 'fx', icon: f.icon, name: f.name });
+  for (const [, f] of Object.entries(FIXTURES)) if (!f.fixed && !f.keep && f.lv === lv) out.push({ k: 'fx', icon: f.icon, name: f.name });
   for (const s of STAFF_SLOTS) if (s.lv === lv) out.push({ k: 'staff', icon: '🧑‍🍳', name: `アルバイト No.${s.no}（雇用ライセンス ¥${s.lic.toLocaleString()}）` });
   for (const [l, n] of TICKET_LV) if (l === lv) out.push({ k: 'reg', icon: '🎫', name: `券売機を${n}台まで置ける` });
   for (const [, g] of Object.entries(GAMBLES)) if (g.lv === lv) out.push({ k: 'gamble', icon: g.icon, name: `賭場で「${g.name}」が遊べる` });
@@ -469,3 +478,72 @@ export function unlocksAt(lv) {
 }
 export function closeTime() { return CLOSE_TIME; }
 export const CHAT_PRESETS = ['スープ炊くね', '麺あげて！', '洗い物するね', '仕込みやる', '配膳お願い！', '泥棒だ！', '火事！消火器！', 'ナイス！', 'ありがとう！', '丁半いこうぜ', '開店しよう！', 'ちょっと待って'];
+
+// ===== 仕込み・冷蔵庫・持ち越し =====
+export const CUT_N = 5; // 食材を1つ切ると、まな板に5人前が並ぶ
+export const PAN_MAX = 5; // トッピング台のバット1つに入る人前（1つのバットに1種類）
+export const KEEP_SPACE = 3; // スープの保存容器1つが冷蔵庫でとる場所（パック）
+export const REHEAT_T = 25; // 冷蔵庫から出したスープを温め直す秒数（火にかけて）
+// 冷蔵庫の場所（パック）を使う量：生の食材はパック単位、仕込んだトッピングは5人前で1パック、スープの容器は1つ3パック
+export function fridgeSpace(st, extra = []) {
+  const s = { ...st.stock };
+  for (const [id, n] of extra) s[id] = (s[id] || 0) + n * (INGREDIENTS[id]?.pack || 0);
+  let u = 0; for (const [id, n] of Object.entries(s)) { const p = INGREDIENTS[id]; if (p && p.space) u += Math.ceil(n / p.pack) * p.space; }
+  for (const [k, n] of Object.entries(st.prep || {})) if (TOPPINGS[k] && n > 0) u += Math.ceil(n / CUT_N);
+  return u + (st.keep || []).length * KEEP_SPACE;
+}
+// バイト専用にできる設備（バイトはこの印がついた設備でしか調理・洗い物をしない。レジ・冷蔵庫・食器棚・受け渡し台は共用）
+export const STAFF_EQ = new Set(['pot', 'pot2', 'boiler', 'boiler6', 'topping', 'board', 'sink', 'worktable', 'rice', 'gyoza', 'fryer', 'beer']);
+export const staffEq = (t) => STAFF_EQ.has(t);
+// 冷蔵庫の中の棚（設備の向きでの座標）。cols×rows のます目に1種類ずつ並ぶ
+export function fridgeGrid(t) {
+  const d = FIXTURES[t], cols = Math.max(2, Math.round(d.w / 0.3)), iw = d.w - 0.1;
+  return { cols, rows: 4, cw: iw / cols, x0: -iw / 2, ys: [0.14, 0.54, 0.94, 1.34], rh: 0.36, z: 0.0 };
+}
+// 冷蔵庫の中身の一覧（スープの容器 → 仕込んだトッピング → 生の食材）
+export function fridgeItems(st) {
+  const out = [];
+  for (const k of st.keep || []) out.push({ kind: 'keep', id: k.id, k: k.k, n: k.sv, b: k.b });
+  for (const [tid, T] of Object.entries(TOPPINGS)) if ((st.prep?.[tid] || 0) > 0) out.push({ kind: 'top', k: tid, n: st.prep[tid] });
+  for (const p of ING_LIST) if (!p.dish && (st.stock?.[p.id] || 0) > 0) out.push({ kind: 'ing', k: p.id, n: st.stock[p.id] });
+  return out;
+}
+// どの冷蔵庫のどの棚に何があるか（冷蔵庫が何台あっても、中身を順に分けて並べる。入りきらない分は最後のますに「ほか」）
+export function fridgeLayout(st) {
+  const frs = (st.fixtures || []).filter((f) => FIXTURES[f.t]?.cap && !f.br).sort((a, b) => a.id - b.id);
+  const items = fridgeItems(st), out = new Map(); let k = 0;
+  frs.forEach((f, fi) => {
+    const G = fridgeGrid(f.t), n = G.cols * G.rows, cells = [], last = fi === frs.length - 1;
+    for (let i = 0; i < n && k < items.length; i++) {
+      const rest = items.length - k;
+      if (last && i === n - 1 && rest > 1) { cells.push({ i, kind: 'more', n: rest }); k = items.length; break; }
+      cells.push({ i, ...items[k++] });
+    }
+    out.set(f.id, cells);
+  });
+  return out;
+}
+export function fridgeCellPos(t, i) { const G = fridgeGrid(t), c = i % G.cols, r = Math.floor(i / G.cols); return [G.x0 + G.cw * (c + 0.5), G.ys[r], G.z]; }
+// 冷蔵庫のどのますを狙っているか（lx：横、y：高さ）
+export function pickFridgeCell(t, lx, y) {
+  const G = fridgeGrid(t), c = clampI(Math.floor((lx - G.x0) / G.cw), 0, G.cols - 1);
+  let r = 0; for (let i = 0; i < G.rows; i++) if (y >= G.ys[i] - 0.02) r = i;
+  return r * G.cols + c;
+}
+const clampI = (v, a, b) => (v < a ? a : v > b ? b : v);
+export function fridgeItemName(o) {
+  if (!o) return '';
+  if (o.kind === 'keep') return `${BROTHS[o.b]?.name || 'スープ'}の容器 ${o.n}杯分`;
+  if (o.kind === 'top') return `仕込んだ${TOPPINGS[o.k]?.name || ''} ${o.n}人前`;
+  if (o.kind === 'ing') return `${INGREDIENTS[o.k]?.name || ''} ${o.n}${INGREDIENTS[o.k]?.unit || ''}`;
+  if (o.kind === 'more') return `ほかの物（${o.n}種類）`;
+  return '';
+}
+
+// ===== 段ボール・投げる =====
+// 手に持って投げられる物（食材・届いた食材のパック・切ったトッピング・スープの容器）
+export const THROWABLE = { ing: 1, pack: 1, top: 1, keep: 1 };
+// 設備の上面の高さ（投げた物がのる高さ）
+export function fixtureTopY(t) { const d = FIXTURES[t]; if (!d) return 0.9; if (d.cap) return 1.9; if (d.rack) return 1.6; if (d.top) return d.top; if (t === 'pc' || t === 'register' || t === 'ticket') return 1.0; if (['deco', 'sign', 'safety'].includes(d.cat)) return 0.6; return 0.92; }
+// 段ボールの中身の名前（items: [[食材ID, パック数]]）
+export function packName(k) { const p = INGREDIENTS[k]; return p ? `${p.name}（${p.pack}${p.unit}）` : ''; }

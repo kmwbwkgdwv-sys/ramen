@@ -1,7 +1,7 @@
 // ===== 描画：店の状態 → 3Dシーン =====
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { FIXTURES, TOPPINGS, SOUPS, BROTHS, TARES, GRIDDLE, BUILDING, HALL, DRONE_PAD, RICE_READY, SOUP_READY, localToWorld, basketPos, passPos, CHOHAN_T } from './data.js';
+import { FIXTURES, TOPPINGS, SOUPS, BROTHS, TARES, GRIDDLE, BUILDING, HALL, DRONE_PAD, RICE_READY, SOUP_READY, localToWorld, basketPos, passPos, slotPos, CHOHAN_T, INGREDIENTS, PAN_MAX, CUT_N, fridgeLayout, fridgeCellPos, fridgeGrid, ingShort } from './data.js';
 import { buildFixture, ANCHOR, stockPotMesh } from './models/fixtures.js';
 import { dishMesh, dishKey, dirtyMesh, cleanMesh, toolMesh, basketMesh, grillFood, panFill, toppingDish, noodleBall, soupSurface, riceSurface, pile, potContents, dryRackMesh, washingMesh, cashMesh, tareBowl, tarePot } from './models/food.js';
 import { potHeat, potAku } from './sim.js';
@@ -158,7 +158,7 @@ export class Renderer {
     const seen = new Set();
     for (const f of store.fixtures) {
       const def = FIXTURES[f.t]; if (!def) continue;
-      const key = [f.t, f.x, f.z, f.r, f.tx, f.c, store.color, f.br ? 1 : 0, f.t === 'ticket' || f.t === 'menuboard' ? menuKey : '', f.t === 'opensign' ? store.phase === 'open' : 0, def.pot && f.away ? 'away' : ''].join('|');
+      const key = [f.t, f.x, f.z, f.r, f.tx, f.c, store.color, f.br ? 1 : 0, f.t === 'ticket' || f.t === 'menuboard' ? menuKey : '', f.t === 'opensign' ? store.phase === 'open' : 0, def.pot && f.away ? 'away' : '', def.cap && f.op ? 'open' : '', f.st ? 'st' : ''].join('|');
       seen.add(f.id);
       const v = this.fixViews.get(f.id);
       if (v && v.key === key) continue;
@@ -166,6 +166,7 @@ export class Renderer {
       let g;
       try { g = bakeGroup(buildFixture(f, { color: store.color, phase: store.phase, menu: store.menu }), { fold: 1500 }); }
       catch (e) { console.warn('設備モデル失敗', f.t, e); g = new THREE.Group(); g.add(new THREE.Mesh(new THREE.BoxGeometry(def.w, 1, def.d).translate(0, 0.5, 0), mat(0xcccccc))); }
+      if (f.st) g.add(staffTag(def));
       g.position.set(f.x, 0, f.z); g.rotation.y = f.r * Math.PI / 2;
       g.traverse((o) => { if (o.isMesh) { o.userData.fid = f.id; o.castShadow = !this.lite && !o.material.transparent; o.receiveShadow = !this.lite; } });
       this.fixRoot.add(g);
@@ -189,22 +190,27 @@ export class Renderer {
       if (d.baskets) parts.push('b' + f.id + f.bk.map((x) => (x ? Math.min(3, Math.floor((clk - x.t0) / 12)) + (x.dr && clk - (x.dt || 0) < 0.6 ? 'L' + Math.floor(x.dr * 3) : '') : '-')).join(''));
       if (d.griddle) parts.push('g' + f.id + (f.gr ? Math.min(4, Math.floor((clk - f.gr.t0) / 8)) : '-'));
       if (d.rice) parts.push('r' + f.id + (f.rc ? (clk - f.rc.t0 >= RICE_READY ? 'y' : 'n') + f.rc.sv : '-'));
-      if (d.board) parts.push('j' + f.id + (f.job ? f.job.tid + Math.floor(f.job.p * 4) : '-'));
+      if (d.board) parts.push('j' + f.id + (f.job ? f.job.tid + Math.floor(f.job.p * 4) : '-') + (f.cut ? f.cut.tid + f.cut.n : ''));
+      if (d.cap) parts.push('f' + f.id + (f.op ? 'o' : 'c'));
+      if (d.topping) parts.push('n' + f.id + JSON.stringify(f.tp || {}));
       if (d.pass) parts.push('s' + f.id + f.ps.map((x) => (x ? dishKey(x) : '-')).join(';'));
+      if (d.slots) parts.push('w' + f.id + (f.sl || []).map((x) => slotKey(x)).join(';'));
       if (d.seats) parts.push('d' + f.id + (f.dd || []).map((a) => a.join('.')).join(';'));
       if (d.topping) parts.push('t' + f.id + (f.tj ? f.tj.k + Math.floor(f.tj.p * 3) : '') + Object.entries(store.tare || {}).map(([k, n]) => k + Math.min(3, Math.ceil(n / 10))).join(''));
       if (d.sink) parts.push('k' + f.id + (f.wp ? f.wk + Math.floor(f.wp * 3) : ''));
     }
-    parts.push('P' + Object.entries(store.prep || {}).map(([k, v]) => k + Math.min(4, Math.ceil(v / Math.max(1, (TOPPINGS[k]?.per || 20) / 4)))).join(','));
+    parts.push('P' + (store.fixtures.some((f) => f.op) ? JSON.stringify([store.prep, store.stock, (store.keep || []).map((k) => k.id + ':' + k.sv)]) : ''));
     parts.push('D' + Object.values(store.dish || {}).map((n) => Math.min(6, n)).join(',') + 'X' + Object.values(store.dirty || {}).map((n) => Math.min(8, n)).join(',') + 'Y' + Object.values(store.dry || {}).join(','));
     parts.push('V' + (dyn?.sv || []).map(([fid, si, i, dd, frac]) => `${fid}.${si}.${i}.${dishKey(dd, frac)}`).join(';'));
     parts.push('C' + (dyn?.ch ? dyn.ch.ph + (dyn.ch.d || []).join('') + JSON.stringify(dyn.ch.b || {}) : ''));
+    parts.push('L' + (store.floor || []).map((o) => o.id).join(','));
     const key = parts.join('|');
     if (key === this._propKey) return;
     this._propKey = key;
     for (const o of [...this.propRoot.children]) this.propRoot.remove(o);
     this._flames = [];
     const put = (f, obj, lx, y, lz, ry = 0) => { const [wx, wz] = localToWorld(f, lx, lz); obj.position.set(wx, y, wz); obj.rotation.y = f.r * Math.PI / 2 + ry; this.propRoot.add(obj); return obj; };
+    for (const o of store.floor || []) { const m = itemMesh(o.it); m.position.set(o.x, 0.01, o.z); m.rotation.y = o.ry || 0; this.propRoot.add(m); }
     const servedAt = new Map();
     for (const [fid, si, i, dd, frac] of dyn?.sv || []) { const k = fid + ':' + si; if (!servedAt.has(k)) servedAt.set(k, []); servedAt.get(k).push([i, dd, frac]); }
     for (const f of store.fixtures) {
@@ -223,10 +229,14 @@ export class Renderer {
       }
       if (d.rice && f.rc) put(f, riceSurface(0.13), 0, ANCHOR.riceY + 0.01, 0);
       if (d.board && f.job) { const T0 = TOPPINGS[f.job.tid]; if (T0) { const raw = ingredientMesh(T0.raw); raw.scale.setScalar(0.75 * (1 - Math.min(0.6, f.job.p * 0.6))); put(f, raw, -0.16, 0.94, 0); const p = pile(f.job.tid, Math.max(0.2, f.job.p)); p.scale.setScalar(1.2); put(f, p, 0.12, 0.945, 0); } }
+      // まな板の上の切ったトッピング（1人前ずつ小皿に）
+      if (d.board && f.cut) for (let i = 0; i < f.cut.n; i++) { const o = toppingDish(f.cut.tid); o.scale.setScalar(0.85); put(f, o, -0.36 + i * 0.18, 0.935, 0.12); }
       if (d.topping) {
-        const pans = ANCHOR.pans(d.w), ids = Object.keys(TOPPINGS).filter((t) => (store.prep?.[t] || 0) > 0).slice(0, pans.length);
-        ids.forEach((tid, i) => { const n = store.prep?.[tid] || 0; if (!n) return; put(f, panFill(tid, Math.min(1, n / TOPPINGS[tid].per)), pans[i][0], ANCHOR.panY, pans[i][1]); });
+        const pans = ANCHOR.pans(d.w), ids = Object.keys(f.tp || {}).filter((t) => TOPPINGS[t] && f.tp[t] > 0).slice(0, pans.length);
+        ids.forEach((tid, i) => put(f, panFill(tid, Math.min(1, f.tp[tid] / PAN_MAX)), pans[i][0], ANCHOR.panY, pans[i][1]));
       }
+      // 冷蔵庫：扉を開けているときだけ棚の中身を並べる
+      if (d.cap && f.op) for (const c of fridgeLayout(store).get(f.id) || []) { const [cx, cy, cz] = fridgeCellPos(f.t, c.i); put(f, fridgeItemMesh(c, fridgeGrid(f.t).cw), cx, cy, cz); }
       if (d.rack) {
         const kinds = ['bowl', 'bowlS', 'plate', 'mug'];
         kinds.forEach((k, ci) => { const n = Math.min(6, store.dish?.[k] || 0); if (!n) return; const list = Array(Math.min(3, n)).fill(k); ANCHOR.rack.ys.forEach((y, li) => { if (n > li * 2) put(f, dirtyClean(list.slice(0, k === 'mug' ? 1 : 3), k), ANCHOR.rack.xs[ci], y, 0); }); });
@@ -242,6 +252,7 @@ export class Renderer {
       if (d.topping && f.tj) put(f, tareBowl(f.tj.k, f.tj.p), ANCHOR.tareMix[0], ANCHOR.tareMix[1], ANCHOR.tareMix[2]);
       if (d.topping) Object.keys(TARES).forEach((k, i) => { if ((store.tare?.[k] || 0) > 0) put(f, tarePot(k, Math.min(1, (store.tare[k] || 0) / TARES[k].per)), ANCHOR.tarePots[0] + i * 0.13, ANCHOR.tarePots[1], ANCHOR.tarePots[2]); });
       if (d.pass) f.ps.forEach((x, i) => { if (!x) return; const [px] = passPos(f.t, i); put(f, dishMesh(x), px, ANCHOR.passY, 0); });
+      if (d.slots) (f.sl || []).forEach((x, i) => { if (!x) return; const [px] = slotPos(f.t, i); put(f, slotMesh(x), px, ANCHOR.workY + (x.t === 'pot' ? -POT_HAND_Y : 0), 0.02); });
       if (d.seats) d.seats.forEach((_, si) => {
         const [sx, sz] = d.spots[si];
         const dd = f.dd?.[si];
@@ -283,11 +294,11 @@ export class Renderer {
     // 手裏剣
     this._shuri ||= new Map();
     const alive = new Set();
-    for (const [id, x, z, y] of dyn?.p || []) {
+    for (const [id, x, z, y, ik] of dyn?.p || []) {
       alive.add(id);
       let o = this._shuri.get(id);
-      if (!o) { o = toolMesh('shuri'); o.scale.setScalar(1.4); this.fxRoot.add(o); this._shuri.set(id, o); o.position.set(x, y, z); }
-      o.userData.tx = x; o.userData.tz = z; o.position.y = y;
+      if (!o) { o = ik ? itemMeshKey(ik) : toolMesh('shuri'); if (!ik) o.scale.setScalar(1.4); o.userData.item = !!ik; this.fxRoot.add(o); this._shuri.set(id, o); o.position.set(x, y, z); }
+      o.userData.tx = x; o.userData.tz = z; o.userData.ty = y; if (!o.userData.item) o.position.y = y;
     }
     for (const [id, o] of this._shuri) if (!alive.has(id)) { this.fxRoot.remove(o); this._shuri.delete(id); }
     // ドローン
@@ -340,7 +351,7 @@ export class Renderer {
       if (f) this.fireLight.position.set(f[0], 1.6, f[1]);
     }
     for (const r of this._flames || []) r.children.forEach((fl, i) => { fl.scale.y = 0.8 + Math.sin(this.t * 20 + i) * 0.3; });
-    for (const o of this._shuri?.values() || []) { o.position.x = lerp(o.position.x, o.userData.tx, Math.min(1, dt * 14)); o.position.z = lerp(o.position.z, o.userData.tz, Math.min(1, dt * 14)); o.rotation.set(Math.PI / 2, 0, this.t * 30); }
+    for (const o of this._shuri?.values() || []) { o.position.x = lerp(o.position.x, o.userData.tx, Math.min(1, dt * 14)); o.position.z = lerp(o.position.z, o.userData.tz, Math.min(1, dt * 14)); if (o.userData.item) { o.position.y = lerp(o.position.y, o.userData.ty, Math.min(1, dt * 14)); o.rotation.set(this.t * 7, this.t * 4, 0); } else o.rotation.set(Math.PI / 2, 0, this.t * 30); }
     if (this.drone?.visible) for (const p of this.drone.userData.props) p.rotation.y += dt * 40;
     if (this._cup?.userData.shake) { this._cup.position.y = 0.42 + Math.abs(Math.sin(this.t * 14)) * 0.12; this._cup.rotation.z = Math.sin(this.t * 22) * 0.4; }
     else if (this._cup?.userData.peek) { const k = Math.min(1, (this.t - this._cup.userData.t0) / 3.4); this._cup.position.y = 0.32 + k * k * 0.06 + Math.sin(this.t * 40) * 0.003; this._cup.rotation.z = k * 0.12; }
@@ -377,17 +388,44 @@ export class Renderer {
     g.userData.size = [w, h, d];
     return g;
   }
+  // 届いた食材の段ボール（開けるとふたが開いて、中のパックが見える）
+  _foodCrateModel(c) {
+    const g = new THREE.Group(), [w, h, d] = [0.72, 0.46, 0.52], card = smat(surf('cardboard'), 0xc99a62, { r: 0.9 });
+    if (!c.op) {
+      g.add(new THREE.Mesh(rbox(w, h, d, 0.015), card));
+      g.add(new THREE.Mesh(box(0.14, 0.004, d + 0.01).translate(0, h, 0), mat(0xc9a46c, { r: 0.35 })));
+    } else {
+      const t = 0.012;
+      g.add(new THREE.Mesh(box(w, 0.012, d).translate(0, 0, 0), card));
+      for (const sx of [-1, 1]) g.add(new THREE.Mesh(box(t, h, d).translate(sx * (w / 2 - t / 2), 0, 0), card));
+      for (const sz of [-1, 1]) g.add(new THREE.Mesh(box(w - t * 2, h, t).translate(0, 0, sz * (d / 2 - t / 2)), card));
+      // 開いたふた（外側に倒れる）
+      for (const sx of [-1, 1]) { const fl = new THREE.Mesh(box(0.005, d / 2, d - 0.01).translate(0, d / 4, 0), card); fl.position.set(sx * w / 2, h, 0); fl.rotation.z = sx * -1.9; g.add(fl); }
+      for (const sz of [-1, 1]) { const fl = new THREE.Mesh(box(w - 0.01, w / 3.2, 0.005).translate(0, w / 6.4, 0), card); fl.position.set(0, h, sz * d / 2); fl.rotation.x = sz * 1.9; g.add(fl); }
+      // 中身（パック）を上から少しのぞかせる
+      const show = c.items.slice(0, 4);
+      show.forEach(([k], i) => { const o = ingredientMesh(k); const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()), kk = Math.min(1, 0.3 / Math.max(0.05, sz.x, sz.z)); o.scale.setScalar(kk); o.position.set(-w / 4 + (i % 2) * w / 2, Math.max(0.02, h - sz.y * kk + 0.04), -d / 5 + Math.floor(i / 2) * d / 2.6); g.add(o); });
+    }
+    const first = INGREDIENTS[c.items[0]?.[0]];
+    const label = canvasTex(256, 128, (cx, W, H) => { cx.fillStyle = '#fffdf6'; rr(cx, 4, 4, W - 8, H - 8, 14); cx.fill(); cx.font = `64px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(first?.icon || '📦', 50, H / 2); cx.fillStyle = '#3a2a1a'; cx.textAlign = 'left'; cx.font = `900 28px ${FONT}`; cx.fillText('食材', 96, H / 2 - 18); cx.font = `800 20px ${FONT}`; cx.fillText(`${c.items.reduce((t, [, n]) => t + n, 0)}パック`, 96, H / 2 + 18); });
+    const lm = new THREE.MeshStandardMaterial({ map: label, roughness: 0.8 });
+    for (const s2 of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.21), lm); p.position.set(0, h * 0.5, s2 * (d / 2 + 0.006)); if (s2 < 0) p.rotation.y = Math.PI; g.add(p); }
+    g.traverse((o) => { if (o.isMesh) { o.castShadow = !this.lite; o.receiveShadow = true; } });
+    g.userData.size = [w, h, d];
+    return g;
+  }
   syncCrates(store, holders, fp) {
     if (!this.crateRoot) { this.crateRoot = new THREE.Group(); this.scene.add(this.crateRoot); this.crateViews = new Map(); this._fallC = new Map(); this._crateT0 = performance.now() / 1000; }
     const now = performance.now() / 1000, ready = now - this._crateT0 > 1.5, alive = new Set();
     for (const c of store.crates || []) {
       alive.add(c.id);
       let v = this.crateViews.get(c.id);
-      if (!v || v.ft !== c.ft) {
+      const ck = c.kind === 'food' ? 'food|' + (c.op ? 1 : 0) + '|' + c.items.map(([k, n]) => k + n).join(',') : c.ft;
+      if (!v || v.ft !== ck) {
         if (v) this.crateRoot.remove(v.g);
-        const g = this._crateModel(c.ft); g.traverse((o) => { if (o.isMesh) o.userData.crate = c.id; });
-        v = { g, ft: c.ft }; this.crateViews.set(c.id, v); this.crateRoot.add(g);
-        if (ready && c.drop && c.loc.t === 'f') this._fallC.set(c.id, now);
+        const g = c.kind === 'food' ? this._foodCrateModel(c) : this._crateModel(c.ft); g.traverse((o) => { if (o.isMesh) o.userData.crate = c.id; });
+        const was = !!v; v = { g, ft: ck }; this.crateViews.set(c.id, v); this.crateRoot.add(g);
+        if (!was && ready && c.drop && c.loc.t === 'f') this._fallC.set(c.id, now);
       }
       const L = c.loc, [, h, d] = v.g.userData.size;
       v.floor = L.t === 'f';
@@ -475,8 +513,8 @@ export class Renderer {
   // 手に持っている物（料理・下げた食器・消火器・手裏剣）
   syncHands(list, fp) {
     const alive = new Set();
-    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'clean' ? 'c' + hd.a.join('.') : hd.t === 'pot' ? `p${hd.ft}${potLv(hd)}${hd.dirty ? 1 : 0}` : hd.t === 'ing' ? `i${hd.k}${Math.min(hd.n, 6)}${(hd.ws || 0) >= 1 ? 'w' : ''}` : hd.t);
-    const make = (hd) => (hd.t === 'dish' ? dishMesh(hd.d) : hd.t === 'dirty' ? dirtyMesh(hd.a) : hd.t === 'clean' ? cleanMesh(hd.a) : hd.t === 'pot' ? potHandMesh(hd.ft, potLv(hd), hd.dirty) : hd.t === 'ing' ? ingHandMesh(hd.k, hd.n, (hd.ws || 0) >= 1) : toolMesh(hd.t));
+    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'clean' ? 'c' + hd.a.join('.') : hd.t === 'pot' ? `p${hd.ft}${potLv(hd)}${hd.dirty ? 1 : 0}` : hd.t === 'ing' ? `i${hd.k}${Math.min(hd.n, 6)}${(hd.ws || 0) >= 1 ? 'w' : ''}` : hd.t === 'top' ? 't' + hd.k : hd.t === 'keep' ? 'k' + hd.b : hd.t === 'pack' ? 'P' + hd.k : hd.t);
+    const make = (hd) => itemMesh(hd);
     const get = (key, hd) => {
       const k = key + '|' + itemKey(hd); alive.add(k);
       let o = this.hands.get(k);
@@ -756,4 +794,84 @@ export function ingHandMesh(k, n, washed) {
     }
     return bakeGroup(g);
   });
+}
+
+// 作業台に置いてある物
+const slotKey = (x) => (!x ? '-' : x.t === 'dish' ? 'd' + dishKey(x.d) : x.t === 'dirty' || x.t === 'clean' ? x.t[0] + x.a.join('.') : x.t === 'ing' ? `i${x.k}${Math.min(x.n, 6)}${(x.ws || 0) >= 1 ? 'w' : ''}` : x.t === 'pot' ? `p${x.ft}${potLv(x)}${x.dirty ? 1 : 0}` : x.t === 'top' ? 't' + x.k : x.t === 'keep' ? 'k' + x.b + x.sv : x.t === 'pack' ? 'P' + x.k : '?');
+function slotMesh(x) {
+  if (x.t === 'dish') return dishMesh(x.d);
+  if (x.t === 'dirty') return dirtyMesh(x.a);
+  if (x.t === 'clean') return cleanMesh(x.a);
+  if (x.t === 'ing') return ingHandMesh(x.k, x.n, (x.ws || 0) >= 1);
+  if (x.t === 'pot') return potHandMesh(x.ft, potLv(x), x.dirty);
+  if (x.t === 'top') return toppingDish(x.k);
+  if (x.t === 'keep') return keepMesh(x.b, x.sv);
+  if (x.t === 'pack') return ingredientMesh(x.k);
+  return new THREE.Group();
+}
+
+// ---------- 冷蔵庫の中身・スープの保存容器・バイト用の札 ----------
+const BROTH_TAPE = { tori: 0xf2c94c, ton: 0xf7f1e3, nibo: 0x8d6e63 };
+const textTexCache = new Map();
+function textTex(text, bg = '#ffffff', fg = '#1c1d20', w = 256, h = 96) {
+  const k = text + bg + fg + w; let t = textTexCache.get(k);
+  if (!t) { t = canvasTex(w, h, (g, W, H) => { g.fillStyle = bg; rr(g, 2, 2, W - 4, H - 4, 14); g.fill(); g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; let sz = Math.floor(H * 0.62); g.font = `900 ${sz}px ${FONT}`; while (g.measureText(text).width > W - 14 && sz > 10) { sz -= 2; g.font = `900 ${sz}px ${FONT}`; } g.fillText(text, W / 2, H / 2 + 2); }); textTexCache.set(k, t); }
+  return t;
+}
+const LBL_G = new Map(), LBL_M = new Map();
+const label3 = (text, w, h, o = {}) => { const gk = w.toFixed(3) + 'x' + h.toFixed(3), mk = text + (o.bg || '') + (o.fg || ''); let g = LBL_G.get(gk); if (!g) LBL_G.set(gk, g = new THREE.PlaneGeometry(w, h)); let m = LBL_M.get(mk); if (!m) LBL_M.set(mk, m = new THREE.MeshBasicMaterial({ map: textTex(text, o.bg, o.fg), toneMapped: false })); return new THREE.Mesh(g, m); };
+// スープの保存容器（ふた付きのステンレス容器・だしの色のテープ）
+export function keepMesh(b, sv) {
+  return handCached('keep|' + b, () => {
+    const g = new THREE.Group(), steel = mat(0xdfe3e8, { r: 0.25, m: 0.8 });
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.095, 0.17, 24).translate(0, 0.085, 0), steel));
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.104, 0.104, 0.018, 24).translate(0, 0.179, 0), mat(0xc9ced3, { r: 0.3, m: 0.7 })));
+    g.add(new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.006, 6, 16).rotateX(Math.PI / 2).translate(0, 0.192, 0), mat(0x2b2f33)));
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1015, 0.1, 0.05, 24, 1, true).translate(0, 0.09, 0), mat(BROTH_TAPE[b] || 0xffffff, { r: 0.6 })));
+    return bakeGroup(g);
+  });
+}
+// 冷蔵庫の棚のます目に置く物（数が多いほど積む）
+const FIT_CACHE = new Map();
+function fridgeItemMesh(c, cw) {
+  const g = new THREE.Group();
+  if (c.kind === 'keep') { const o = keepMesh(c.b, c.n); o.scale.setScalar(Math.min(1.1, cw / 0.24)); g.add(o); const l = label3(`${BROTHS[c.b]?.short || ''} ${c.n}杯`, 0.16, 0.05, { bg: '#ffffff' }); l.position.set(0, 0.09, 0.105); g.add(l); return g; }
+  if (c.kind === 'more') { const l = label3(`ほか${c.n}種`, cw * 0.8, 0.08, { bg: '#2b2f33', fg: '#ffd23f' }); l.position.set(0, 0.12, 0.2); g.add(l); return g; }
+  const many = Math.min(3, c.kind === 'top' ? Math.ceil(c.n / CUT_N) + (c.n > 1 ? 1 : 0) : Math.ceil(c.n / Math.max(1, INGREDIENTS[c.k]?.pack || 1)) + (c.n > 1 ? 1 : 0));
+  for (let i = 0; i < many; i++) {
+    const o = c.kind === 'top' ? toppingDish(c.k) : ingredientMesh(c.k), sk = c.kind + c.k + cw.toFixed(3);
+    let k = FIT_CACHE.get(sk); if (k == null) { const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()); k = Math.min(1.2, (cw * 0.8) / Math.max(0.02, sz.x, sz.z), 0.2 / Math.max(0.02, sz.y)); FIT_CACHE.set(sk, k); }
+    o.scale.setScalar(k); o.position.set((i - (many - 1) / 2) * 0.03, 0, -0.08 + i * 0.07); g.add(o);
+  }
+  const l = label3(c.kind === 'top' ? `${TOPPINGS[c.k]?.name} ${c.n}人前` : `${ingShort(c.k)} ${c.n}`, Math.min(0.26, cw * 0.95), 0.05, { bg: c.kind === 'top' ? '#fff4dc' : '#ffffff' });
+  l.position.set(0, 0.02, 0.24); l.rotation.x = -0.35; g.add(l);
+  return g;
+}
+// バイト専用の設備につける黄色い札
+function staffTag(def) {
+  const m = label3('🧑‍🍳 バイト用', 0.34, 0.1, { bg: '#ffd23f', fg: '#2b2f33' });
+  m.position.set(0, Math.min(0.8, (def.top || 0.9) - 0.15), def.d / 2 + 0.012); m.userData.noBake = true;
+  return m;
+}
+
+// 手に持つ物・投げた物・床の物の見た目
+export function itemMesh(hd) {
+  if (!hd) return new THREE.Group();
+  if (hd.t === 'dish') return dishMesh(hd.d);
+  if (hd.t === 'dirty') return dirtyMesh(hd.a);
+  if (hd.t === 'clean') return cleanMesh(hd.a);
+  if (hd.t === 'pot') return potHandMesh(hd.ft, potLv(hd), hd.dirty);
+  if (hd.t === 'ing') return ingHandMesh(hd.k, hd.n, (hd.ws || 0) >= 1);
+  if (hd.t === 'top') return toppingDish(hd.k);
+  if (hd.t === 'keep') return keepMesh(hd.b, hd.sv);
+  if (hd.t === 'pack') return ingredientMesh(hd.k);
+  return toolMesh(hd.t);
+}
+function itemMeshKey(k) {
+  const [t, a, b] = String(k).split(':');
+  if (t === 'p') return ingredientMesh(a);
+  if (t === 'i') return ingHandMesh(a, +b || 1, false);
+  if (t === 't') return toppingDish(a);
+  if (t === 'k') return keepMesh(a, 1);
+  return new THREE.Group();
 }

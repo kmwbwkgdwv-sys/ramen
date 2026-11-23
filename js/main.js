@@ -57,6 +57,7 @@ class App {
     window.addEventListener('pagehide', () => this.saveGame(true));
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveGame(false); });
     bootMsg('完成！', 100);
+    this._startBackgroundTicker();
     requestAnimationFrame((t) => this.loop(t));
     setTimeout(() => $('#boot')?.classList.add('gone'), 250);
     if (this.profile) {
@@ -193,9 +194,28 @@ class App {
     void fromClose;
   }
 
+  // ---------- 裏に回ったときもホストの店を止めない ----------
+  // 画面が裏に回る（別のアプリ・タブに切り替える、ウィンドウを最小化する）と requestAnimationFrame が止まる。
+  // ルームのホストだとお店の時間が止まって、参加している全員の画面が固まってしまうので、
+  // Worker のタイマー（裏でも止まりにくい）で 0.1秒ごとにお店の計算と送信だけ続ける
+  _startBackgroundTicker() {
+    this._rafAt = performance.now();
+    try {
+      const url = URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 100);'], { type: 'text/javascript' }));
+      this._bgWorker = new Worker(url);
+      this._bgWorker.onmessage = () => this._backgroundTick();
+    } catch (e) { console.warn('background ticker', e); }
+  }
+  _backgroundTick() {
+    const now = performance.now(), g = this.game;
+    if (this.mode !== 'game' || !g?.sim || !g.room || now - this._rafAt < 300) { this._bgAt = now; return; }
+    const dt = Math.min(0.5, (now - (this._bgAt || now)) / 1000); this._bgAt = now;
+    try { g.backgroundStep(dt); } catch (e) { console.warn('backgroundStep', e); }
+  }
   // ---------- メインループ ----------
   loop(t) {
     requestAnimationFrame((tt) => this.loop(tt));
+    this._rafAt = performance.now();
     const dt = Math.min(0.05, (t - this.last) / 1000); this.last = t;
     const R = this.renderer;
     try {

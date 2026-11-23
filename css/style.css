@@ -1053,3 +1053,17 @@ canvas.pe.tile.art { display: block; padding: 0; background: radial-gradient(cir
 .stopb:disabled { opacity: .55; }
 .slot.chance .g-status { background: linear-gradient(90deg, #ff5f6d, #ffc371, #6bff9b, #5fc8ff, #c56bff); background-size: 300% 100%; animation: rainbow 1s linear infinite; color: #2a0a00; }
 @media (max-height: 520px) { .stopb { width: 56px; padding: 5px 0; } .cup2 { font-size: 52px; } .g-table { min-height: 96px; } .cb-bowl { height: 56px; width: 120px; } .cb-bowl .bd { font-size: 26px; } .g-banner { font-size: 20px; } .g-banner .g-amt { font-size: 26px; } }
+
+/* ===== 冷蔵庫の持ち越し・バイト用の設備 ===== */
+.sum-waste { margin: 10px 0 4px; padding: 10px 12px; border-radius: 12px; background: #fff1dc; border: 2px solid #ffb347; color: #5a3a10; display: grid; gap: 4px; }
+.sum-waste b { color: #b85c00; }
+.row.center { justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.hud-open.pulse2 { background: linear-gradient(180deg, #ffd23f, #f2a900); color: #2b2f33; animation: pulse2 1.4s ease-in-out infinite; }
+@keyframes pulse2 { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 210, 63, .6); } 50% { box-shadow: 0 0 0 8px rgba(255, 210, 63, 0); } }
+.hand-card .big-ic { font-size: 34px; width: 54px; height: 54px; display: grid; place-items: center; }
+.staff-eq-note { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: #fff4c2; color: #5a4300; border: 2px solid #ffd23f; font-size: 13px; line-height: 1.5; }
+.bnote { flex: none; width: 210px; align-self: stretch; font-size: 12px; line-height: 1.45; padding: 8px; border-radius: 12px; background: #fff4c2; color: #5a4300; border: 2px solid #ffd23f; }
+.bitem.stf { box-shadow: inset 0 0 0 2px rgba(255, 210, 63, .7); }
+.tab.staff { color: #ffd23f; }
+.btn.sug { margin: 0 0 8px; width: 100%; background: linear-gradient(180deg, #4ade80, #22a35a); color: #08210f; }
+.rank-row .rv .rg { color: #1f8a4c; } .rank-row .rv .rg.neg { color: #c0392b; }

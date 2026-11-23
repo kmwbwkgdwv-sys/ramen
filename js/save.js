@@ -1,6 +1,6 @@
 // ===== プロフィール保存・引き継ぎコード・同期 =====
 import { randomCode, normalizeCode } from './util.js';
-import { newStore, normalizeStore } from './sim.js';
+import { newStore, normalizeStore, totalProfit } from './sim.js';
 import { defaultAvatar, sanitizeAvatar } from './models/character.js';
 
 const KEY = 'ramenshop.profile.v1';
@@ -124,10 +124,14 @@ export async function restoreByCode(cloud, code) {
 }
 // ---------- 自分のお店を何個も持つ ----------
 export const MAX_OWN_STORES = 10;
-const slotInfo = (sid, st) => ({ sid, n: String(st.name || '').slice(0, 16), lv: st.level, day: st.day, sales: Math.round(st.totalSales || 0), b: st.totalBowls || 0, t: Date.now() });
+const slotInfo = (sid, st) => ({ sid, n: String(st.name || '').slice(0, 16), lv: st.level, day: st.day, sales: Math.round(st.totalSales || 0), g: totalProfit(st), b: st.totalBowls || 0, t: Date.now() });
 // 自分のお店の一覧（いまのお店が先頭）
 export function listOwnStores(p) {
-  return [{ ...slotInfo(p.cur, p.store), cur: true }, ...(p.slots || []).map((s) => ({ sid: s.sid, n: s.n, lv: s.lv, day: s.day, sales: s.sales, t: s.t }))];
+  return [{ ...slotInfo(p.cur, p.store), cur: true }, ...(p.slots || []).map((s) => ({ sid: s.sid, n: s.n, lv: s.lv, day: s.day, sales: s.sales, g: s.g ?? slotProfit(s), t: s.t }))];
+}
+// 前の版で保存したお店（g がない）は中身から計算する
+const SP_CACHE = new Map();
+function slotProfit(s) { const k = s.sid + ':' + s.t; if (SP_CACHE.has(k)) return SP_CACHE.get(k); let v = 0; try { v = totalProfit(normalizeStore(JSON.parse(s.d))); } catch (e) { v = 0; } SP_CACHE.set(k, v); return v;
 }
 function stashCurrent(p) { p.slots = [{ ...slotInfo(p.cur, p.store), d: JSON.stringify(p.store) }, ...(p.slots || []).filter((s) => s.sid !== p.cur)]; }
 // ほかのお店に切りかえる
@@ -171,6 +175,7 @@ export function deleteStore(p, sid) {
 // ランキング：自分のお店のうち、いちばん進んでいるお店で載せる
 export function rankEntry(p) {
   const best = listOwnStores(p).sort((a, b) => (b.lv || 1) - (a.lv || 1) || (b.sales || 0) - (a.sales || 0))[0];
-  const st = best && !best.cur ? best : { lv: p.store.level, sales: Math.round(p.store.totalSales), day: p.store.day, n: p.store.name };
-  return { n: p.name, lv: st.lv || 1, s: Math.round(st.sales || 0), p: Math.round(p.playTime), c: bowlCount(p), d: st.day || 1, h: p.av.hat, st: String(st.n || '').slice(0, 16), t: Date.now() };
+  const st = best && !best.cur ? best : { lv: p.store.level, sales: Math.round(p.store.totalSales), g: totalProfit(p.store), day: p.store.day, n: p.store.name };
+  // g：総利益（毎日の利益の合計＋賭場の勝ち負け）。s（総売上）は前の版との互換のために残す
+  return { n: p.name, lv: st.lv || 1, s: Math.round(st.sales || 0), g: Math.round(st.g || 0), p: Math.round(p.playTime), c: bowlCount(p), d: st.day || 1, h: p.av.hat, st: String(st.n || '').slice(0, 16), t: Date.now() };
 }

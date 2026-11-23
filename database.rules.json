@@ -10,10 +10,16 @@
       },
       "lb": {
         ".read": "auth != null",
-        ".indexOn": ["lv", "s", "p", "c"],
+        ".indexOn": [
+          "lv",
+          "s",
+          "g",
+          "p",
+          "c"
+        ],
         "$pid": {
           ".write": "auth != null && $pid.length === 10",
-          ".validate": "newData.hasChildren(['n', 'lv', 's', 'p', 'c']) && newData.child('n').isString() && newData.child('n').val().length <= 12 && newData.child('lv').isNumber() && newData.child('lv').val() <= 50 && newData.child('s').isNumber() && newData.child('p').isNumber() && newData.child('c').isNumber() && newData.child('c').val() >= 0"
+          ".validate": "newData.hasChildren(['n', 'lv', 's', 'p', 'c']) && newData.child('n').isString() && newData.child('n').val().length <= 12 && newData.child('lv').isNumber() && newData.child('lv').val() <= 50 && newData.child('s').isNumber() && newData.child('p').isNumber() && newData.child('c').isNumber() && newData.child('c').val() >= 0 && (!newData.child('g').exists() || newData.child('g').isNumber())"
         }
       },
       "rooms": {

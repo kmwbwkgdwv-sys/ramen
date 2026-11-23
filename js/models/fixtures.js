@@ -5,7 +5,7 @@ import { FIXTURES, TOPPINGS, SOUPS, basketPos, passPos } from '../data.js';
 import { tex, surf, signTexture, canvasTex, emoji, FONT, rr, shade } from '../textures.js';
 import { mat, smat, glassMat, T, box, rbox, cyl, sph, lathe, plane, torus, cone, add, M, vcolor } from './geo.js';
 
-import { ANCHOR, basic, stockPotMesh, sinkModel, stoveModel, boilerModel, toppingModel, boardModel, fridgeModel, dishrackModel, passModel, riceModel, gyozaModel, fryerModel, beerModel, tableModel, counterModel, benchModel, waterModel, trashModel, ticketModel, registerModel, plantModel, zashikiModel, kamidanaModel } from './equip.js';
+import { ANCHOR, basic, stockPotMesh, sinkModel, stoveModel, boilerModel, toppingModel, boardModel, fridgeModel, dishrackModel, passModel, worktableModel, riceModel, gyozaModel, fryerModel, beerModel, tableModel, counterModel, benchModel, waterModel, trashModel, ticketModel, registerModel, plantModel, zashikiModel, kamidanaModel } from './equip.js';
 export { ANCHOR, basic, stockPotMesh };
 const C = (c, o = {}) => mat(c, { r: 0.55, ...o });
 const STEEL = () => smat(surf('metal'), 0xe8ebee, { r: 0.3, m: 0.75 });
@@ -44,12 +44,13 @@ const BUILD = {
   boiler6(f) { return boilerModel(FIXTURES.boiler6); },
   topping(f) { return toppingModel(); },
   board(f) { return boardModel(); },
-  fridge(f) { return fridgeModel(FIXTURES.fridge, 2); },
-  fridge2(f) { return fridgeModel(FIXTURES.fridge2, 3); },
+  fridge(f) { return fridgeModel(FIXTURES.fridge, 2, !!f.op); },
+  fridge2(f) { return fridgeModel(FIXTURES.fridge2, 2, !!f.op); },
   dishrack(f) { return dishrackModel(); },
   sink(f) { return sinkModel(); },
   register(f) { return registerModel(); },
   pass(f) { return passModel(); },
+  worktable(f) { return worktableModel(); },
   rice(f) { return riceModel(); },
   gyoza(f) { return gyozaModel(); },
   fryer(f) { return fryerModel(); },
@@ -150,7 +151,7 @@ const BUILD = {
   signstand(f) {
     const g = new THREE.Group(), w = WOOD();
     const t = signTexture(f.tx || '', { w: 256, h: 320, chalk: true });
-    for (const s of [1, -1]) { const p = new THREE.Group(); add(p, box(0.46, 0.72, 0.03), w); p.add(M(T(plane(0.4, 0.58), 0, 0.37, 0.016), basic(t))); p.position.set(0, 0.05, s * 0.12); p.rotation.y = s > 0 ? 0 : Math.PI; p.rotation.x = s > 0 ? -0.22 : 0.22; g.add(p); }
+    for (const s of [1, -1]) { const p = new THREE.Group(); add(p, box(s > 0 ? 0.46 : 0.454, 0.72, 0.03), w); p.add(M(T(plane(0.4, 0.58), 0, 0.37, 0.019), basic(t))); p.position.set(0, 0.05, s * 0.12); p.rotation.y = s > 0 ? 0 : Math.PI; p.rotation.x = s > 0 ? -0.22 : 0.22; g.add(p); }
     return g;
   },
   nobori(f, ctx) {

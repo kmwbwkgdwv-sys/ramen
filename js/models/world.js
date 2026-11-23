@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { tex, surf, signTexture, canvasTex, FONT, shade } from '../textures.js';
 import { mat, smat, glassMat, T, box, rbox, cyl, sph, plane, cone, torus, add, M, bakeGroup, merge, vgrad, wuv } from './geo.js';
 import { basic, vtext, tatamiTex } from './fixtures.js';
-import { SHOP, SHOP_X1, COL_W, BACK_Z, FRONT_Z, KITCHEN_Z, DOOR, BUILDING, HALL, ALL_COLS, CRATE_AREA, DRONE_PAD, colRect, getWalls } from '../data.js';
+import { SHOP, SHOP_X1, COL_W, BACK_Z, FRONT_Z, KITCHEN_Z, DOOR, BUILDING, HALL, ALL_COLS, CRATE_AREA, DRONE_PAD, BACK_DOOR, colRect, getWalls } from '../data.js';
 import { mulberry32 } from '../util.js';
 
 const C = (c, o = {}) => mat(c, { r: 0.7, ...o });
@@ -16,9 +16,9 @@ function innerWall(g, w, h, d, cx, cz, y = 0) {
   const plaster = smat(surf('wall'), 0xfbf3e2, { r: 0.9 }), wood = smat(surf('wood'), 0x8a5a36, { r: 0.6 });
   add(g, wuv(T(box(w, h, d), cx, y, cz), 2.4), plaster);
   if (y) return;
-  const lx = d < w ? 0.014 : 0.024, lz = w < d ? 0.014 : 0.024;
-  add(g, wuv(T(box(w + lx, 1.0, d + lz), cx, 0, cz), 1.2), wood);
-  add(g, T(box(w + lx * 1.5, 0.05, d + lz * 1.5), cx, 1.0, cz), C(0x4a2e1a, { r: 0.5 }));
+  const lx = d < w ? 0.014 : 0.024, lz = w < d ? 0.014 : 0.024, k = d < w ? 0 : 0.004;
+  add(g, wuv(T(box(w + lx, 1.0 - k, d + lz), cx, 0, cz), 1.2), wood);
+  add(g, T(box(w + lx * 1.5, 0.05 + k * 2, d + lz * 1.5), cx, 1.0 - k, cz), C(0x4a2e1a, { r: 0.5 }));
 }
 export class World {
   constructor(scene, { lite }) {
@@ -55,13 +55,13 @@ export class World {
     // 裏の路地・建物のあいだ（アスファルト）
     const asph = smat(surf('asphalt'), 0xd8d8d8, { r: 0.95 });
     lay(T(plane(52, 7), CX + 6, 0.002, BACK_Z - 3.6, -Math.PI / 2), asph);
-    lay(T(plane(HALL.x0 - R - 0.3, FRONT_Z - BACK_Z), (R + HALL.x0) / 2, 0.003, CZ, -Math.PI / 2), asph);
-    lay(T(plane(9, FRONT_Z - HALL.z0 + 2), HX, 0.002, HALL.z0 - 1 + (FRONT_Z - HALL.z0 + 2) / 2 - 1, -Math.PI / 2), asph);
+    lay(T(plane(HX - 4.5 - R - 0.15, FRONT_Z - BACK_Z + 0.1), (R + 0.15 + HX - 4.5) / 2, 0.003, (FRONT_Z + BACK_Z - 0.1) / 2, -Math.PI / 2), asph);
+    lay(T(plane(9, FRONT_Z - HALL.z0 + 2), HX, 0.001, HALL.z0 - 1 + (FRONT_Z - HALL.z0 + 2) / 2 - 1, -Math.PI / 2), asph);
     // ドローンの着陸場所
     const pad = canvasTex(256, 256, (c, w, h) => { c.fillStyle = '#2b2f33'; c.fillRect(0, 0, w, h); c.strokeStyle = '#ffd23f'; c.lineWidth = 12; c.beginPath(); c.arc(w / 2, h / 2, w * 0.4, 0, 7); c.stroke(); c.fillStyle = '#ffd23f'; c.font = `900 120px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('H', w / 2, h / 2 + 6); });
     lay(T(plane(2.2, 2.2), DRONE_PAD[0], 0.01, DRONE_PAD[1], -Math.PI / 2), mat(0xffffff, { map: pad, r: 0.8 }));
     const A = CRATE_AREA;
-    const zone = canvasTex(512, 220, (c, W, H) => { c.fillStyle = 'rgba(255,204,0,0.16)'; c.fillRect(0, 0, W, H); c.strokeStyle = '#ffcc00'; c.lineWidth = 12; c.strokeRect(8, 8, W - 16, H - 16); c.fillStyle = 'rgba(255,255,255,0.92)'; c.font = `900 44px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('📦 設備の荷受け', W / 2, H / 2); });
+    const zone = canvasTex(512, 220, (c, W, H) => { c.fillStyle = 'rgba(255,204,0,0.16)'; c.fillRect(0, 0, W, H); c.strokeStyle = '#ffcc00'; c.lineWidth = 12; c.strokeRect(8, 8, W - 16, H - 16); c.fillStyle = 'rgba(255,255,255,0.92)'; c.font = `900 44px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('📦 荷受け（段ボール）', W / 2, H / 2); });
     lay(T(plane(A.maxX - A.minX + 0.5, A.maxZ - A.minZ + 0.5), (A.minX + A.maxX) / 2, 0.009, (A.minZ + A.maxZ) / 2, -Math.PI / 2), mat(0xffffff, { map: zone, t: true, r: 0.9 }));
   }
   _town() {
@@ -92,7 +92,7 @@ export class World {
       add(g, T(box(9.6, 0.5, 8), 0, h), roofM, x, 0, zz);
       add(g, T(cone(6.4, 1.6, 4), 0, h + 0.4, 0, 0, Math.PI / 4, 0, 1, 1, 0.75), roofM, x, 0, zz);
       add(g, T(box(6, 1.8, 0.05), 0, 0.9), C(0x5a3a22, { r: 0.7 }), x, 0, zz - 3.53);
-      for (let k = 0; k < 8; k++) add(g, T(box(0.04, 1.8, 0.06), -2.8 + k * 0.8, 0.9), C(0x3a2414), x, 0, zz - 3.56);
+      for (let k = 0; k < 8; k++) add(g, T(box(0.04, 1.79, 0.06), -2.8 + k * 0.8, 0.9), C(0x3a2414), x, 0, zz - 3.56);
     }
     // 遠くの五重塔と富士山
     const pag = new THREE.Group(), red = C(0xa8321e, { r: 0.7 }), roof2 = C(0x2f3238, { r: 0.6 });
@@ -113,23 +113,32 @@ export class World {
     const wood = add(Rt, uvScale(T(plane(SW, FRONT_Z - KITCHEN_Z), CX, 0.004, (KITCHEN_Z + FRONT_Z) / 2, -Math.PI / 2), SW / 4, (FRONT_Z - KITCHEN_Z) / 4), smat(surf('wood'), 0xcfa57a, { r: 0.6 })); wood.castShadow = false;
     const tile = add(Rt, uvScale(T(plane(SW, KITCHEN_Z - BACK_Z), CX, 0.004, (BACK_Z + KITCHEN_Z) / 2, -Math.PI / 2), SW / 30, (KITCHEN_Z - BACK_Z) / 10), smat(surf('floor'), 0xb9c0c4, { r: 0.7 })); tile.castShadow = false;
     const outer = smat(surf('wood'), 0x4b2f1c, { r: 0.7 }), stone = C(0x77736c, { r: 0.85 }), black = C(0x1d1d20, { r: 0.5 });
-    const wall = (x0, x1, z0, z1, h, y, side) => {
+    // e0/e1 = 外の板を両端からどれだけはみ出させるか（となりの壁の板と面が重なってちらつかないように）
+    const wall = (x0, x1, z0, z1, h, y, side, e0 = 0.05, e1 = 0.05) => {
       const w = x1 - x0, d = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
       innerWall(g, w, h, d, cx, cz, y);
-      const [ox, oz] = side, bw = ox ? 0.05 : w + 0.1, bd = oz ? 0.05 : d + 0.1;
-      add(g, wuv(T(box(bw, h, bd), cx + ox * (w / 2 + 0.025), y, cz + oz * (d / 2 + 0.025)), 1.2), outer);
-      if (!y) add(g, T(box(bw + Math.abs(ox) * 0.04, 0.35, bd + Math.abs(oz) * 0.04), cx + ox * (w / 2 + 0.025), 0, cz + oz * (d / 2 + 0.025)), stone);
+      const [ox, oz] = side, bw = ox ? 0.05 : w + e0 + e1, bd = oz ? 0.05 : d + e0 + e1;
+      const bx = cx + ox * (w / 2 + 0.025) + (ox ? 0 : (e1 - e0) / 2), bz = cz + oz * (d / 2 + 0.025) + (oz ? 0 : (e1 - e0) / 2);
+      add(g, wuv(T(box(bw, h, bd), bx, y, bz), 1.2), outer);
+      if (!y) add(g, T(box(bw + (ox ? 0.04 : 0.02), ox ? 0.35 : 0.34, bd + (oz ? 0.04 : 0.02)), bx, 0, bz), stone);
     };
     wall(L - 0.12, L + 0.12, BACK_Z - 0.12, FRONT_Z + 0.12, WALL_H, 0, [-1, 0]);
     wall(R - 0.12, R + 0.12, BACK_Z - 0.12, FRONT_Z + 0.12, WALL_H, 0, [1, 0]);
     // 奥の壁（勝手口つき）
-    const bd0 = 3.9, bd1 = 5.1;
-    wall(L, bd0, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H, 0, [0, -1]); wall(bd1, R, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H, 0, [0, -1]);
-    wall(bd0, bd1, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H - 2.2, 2.2, [0, -1]);
-    add(g, T(box(bd1 - bd0, 2.2, 0.06), (bd0 + bd1) / 2, 0, BACK_Z), C(0x6b7b88, { r: 0.4, m: 0.5 }));
-    add(g, T(cyl(0.03, 0.03, 0.04, 10), bd1 - 0.15, 1.0, BACK_Z + 0.05, Math.PI / 2), C(0xcccccc, { m: 0.8 }));
-    add(g, T(plane(1.0, 0.24), (bd0 + bd1) / 2, 1.8, BACK_Z + 0.04), basic(signTexture('勝手口', { w: 256, h: 64, bg: '#2b2f33', fg: '#ffd23f', radius: 8 })));
-    this.obstacles.push({ minX: bd0, maxX: bd1, minZ: BACK_Z - 0.2, maxZ: BACK_Z + 0.1 });
+    const bd0 = BACK_DOOR.x0, bd1 = BACK_DOOR.x1;
+    wall(L, bd0, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H, 0, [0, -1], 0.12, 0); wall(bd1, R, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H, 0, [0, -1], 0, 0.12);
+    wall(bd0, bd1, BACK_Z - 0.12, BACK_Z + 0.12, WALL_H - 2.2, 2.2, [0, -1], 0, 0);
+    // 勝手口：人が近づくと横に開く（外に出ると、届いた段ボールとドローンの着陸場所）
+    {
+      const d = new THREE.Group(), steel = C(0x6b7b88, { r: 0.4, m: 0.5 }), w = bd1 - bd0;
+      d.add(M(T(box(w, 2.2, 0.05), 0, 0), steel));
+      for (const sz of [-1, 1]) d.add(M(T(cyl(0.022, 0.022, 0.04, 10), -w / 2 + 0.15, 1.0, sz * 0.025, sz * Math.PI / 2), C(0xcccccc, { m: 0.8 })));
+      d.add(M(T(box(w - 0.3, 0.3, 0.056), 0, 1.6), C(0x9fb3c2, { r: 0.1, m: 0.3, t: true, op: 0.6 }), false));
+      d.position.set((bd0 + bd1) / 2, 0, BACK_Z); d.userData = { base: (bd0 + bd1) / 2, s: -1, w, back: true };
+      this.root.add(d); this.doors.push(d);
+    }
+    add(g, T(plane(1.0, 0.24), (bd0 + bd1) / 2, 2.42, BACK_Z + 0.125), basic(signTexture('勝手口', { w: 256, h: 64, bg: '#2b2f33', fg: '#ffd23f', radius: 8 })));
+    add(g, T(plane(1.4, 0.3), (bd0 + bd1) / 2, 2.42, BACK_Z - 0.175, 0, Math.PI), basic(signTexture('📦 勝手口（荷受け）', { w: 512, h: 110, bg: '#2b2f33', fg: '#ffd23f', radius: 10 })));
     // 正面：格子の窓と引き戸
     const glass = glassMat(), lattice = C(0x3a2414, { r: 0.6 });
     const front = (x0, x1) => {
@@ -141,15 +150,15 @@ export class World {
       add(g, T(box(w, 0.05, 0.08), cx, 1.6, FRONT_Z + 0.06), lattice);
       innerWall(g, w, 0.9, 0.04, cx, FRONT_Z - 0.14, 0);
     };
-    front(L, DOOR.x - DOOR.half - 0.12); front(DOOR.x + DOOR.half + 0.12, R);
-    for (const x of [DOOR.x - DOOR.half - 0.06, DOOR.x + DOOR.half + 0.06]) add(g, T(box(0.12, 2.4, 0.3), x, 0, FRONT_Z), black);
+    front(L + 0.12, DOOR.x - DOOR.half - 0.12); front(DOOR.x + DOOR.half + 0.12, R - 0.12);
+    for (const x of [DOOR.x - DOOR.half - 0.06, DOOR.x + DOOR.half + 0.06]) add(g, T(box(0.12, 2.3, 0.3), x, 0, FRONT_Z), black);
     add(g, T(box(DOOR.half * 2 + 0.24, 0.18, 0.3), DOOR.x, 2.3, FRONT_Z), black);
     add(g, wuv(T(box(DOOR.half * 2 + 0.24, WALL_H - 2.48, 0.24), DOOR.x, 2.48, FRONT_Z), 1.2), outer);
     for (const s of [-1, 1]) {
       const d = new THREE.Group();
       d.add(M(T(box(DOOR.half, 2.25, 0.03), 0, 0.02), glass, false));
       for (let k = 0; k <= 4; k++) d.add(M(T(box(0.04, 2.25, 0.05), -DOOR.half / 2 + k * DOOR.half / 4, 0.02), lattice));
-      d.add(M(T(box(DOOR.half, 0.06, 0.05), 0, 0.02), lattice)); d.add(M(T(box(DOOR.half, 0.06, 0.05), 0, 2.2), lattice));
+      d.add(M(T(box(DOOR.half, 0.06, 0.056), 0, 0.016), lattice)); d.add(M(T(box(DOOR.half, 0.06, 0.056), 0, 2.213), lattice));
       d.position.set(DOOR.x + s * DOOR.half / 2, 0, FRONT_Z + 0.05 * s); d.userData = { base: DOOR.x + s * DOOR.half / 2, s, w: DOOR.half };
       this.root.add(d); this.doors.push(d);
     }
@@ -181,8 +190,21 @@ export class World {
   _hall() {
     const g = new THREE.Group(), x0 = HALL.x0, x1 = HALL.x1, z0 = HALL.z0, z1 = HALL.z1;
     const outer = smat(surf('wood'), 0x2e1c12, { r: 0.75 }), inner = smat(surf('wall'), 0x8f2a2a, { r: 0.9 }), black = C(0x161618, { r: 0.5 });
-    const fl = add(this.root, uvScale(T(plane(x1 - x0, z1 - z0), HX, 0.006, HZ, -Math.PI / 2), 1, 1), mat(0xffffff, { map: tatamiTex(), r: 0.85 })); fl.castShadow = false;
-    const wl = (ax, bx, az, bz, h = HALL_H) => { const w = bx - ax, d = bz - az; add(g, wuv(T(box(w, h, d), (ax + bx) / 2, 0, (az + bz) / 2), 2.4), inner); add(g, wuv(T(box(w + 0.06, h, d + 0.06), (ax + bx) / 2, 0, (az + bz) / 2), 1.2), outer); };
+    const fl = add(this.root, uvScale(T(plane(x1 - x0, z1 - z0), HX, 0.008, HZ, -Math.PI / 2), 1, 1), mat(0xffffff, { map: tatamiTex(), r: 0.85 })); fl.castShadow = false;
+    // 壁：外まわりは木の板、部屋の内側にだけ赤い漆喰の板を張る（同じ面が重ならないように板の端をそろえる）
+    const IN = 0.15;
+    const wl = (ax, bx, az, bz, h = HALL_H) => {
+      const w = bx - ax, d = bz - az, cx = (ax + bx) / 2, cz = (az + bz) / 2;
+      if (w > d) {
+        const a = Math.max(ax, x0 + IN), b = Math.min(bx, x1 - IN), s = Math.sign(HZ - cz);
+        add(g, wuv(T(box(b - a, h, d + 0.06), (a + b) / 2, 0, cz), 1.2), outer);
+        add(g, wuv(T(box(b - a, h - 0.02, 0.02), (a + b) / 2, 0, cz + s * (d / 2 + 0.04)), 2.4), inner);
+      } else {
+        const s = Math.sign(HX - cx);
+        add(g, wuv(T(box(w + 0.06, h, d + 0.06), cx, 0, cz), 1.2), outer);
+        add(g, wuv(T(box(0.02, h - 0.02, z1 - z0 - IN * 2 - 0.04), cx + s * (w / 2 + 0.04), 0, (z0 + z1) / 2), 2.4), inner);
+      }
+    };
     wl(x0 - 0.12, x0 + 0.12, z0 - 0.12, z1 + 0.12); wl(x1 - 0.12, x1 + 0.12, z0 - 0.12, z1 + 0.12); wl(x0, x1, z0 - 0.12, z0 + 0.12);
     wl(x0, HALL.door[0], z1 - 0.12, z1 + 0.12); wl(HALL.door[1], x1, z1 - 0.12, z1 + 0.12);
     add(g, T(box(HALL.door[1] - HALL.door[0], HALL_H - 2.3, 0.24), HX, 2.3, z1), outer);
@@ -190,7 +212,7 @@ export class World {
     add(g, T(cone((x1 - x0) * 0.75, 1.6, 4), HX, HALL_H + 0.3, HZ, 0, Math.PI / 4, 0, 1, 1, 1.1), C(0x3c4048, { r: 0.6 }));
     this.root.add(M(T(plane(x1 - x0, z1 - z0), HX, HALL_H - 0.01, HZ, Math.PI / 2), C(0x3a2416, { r: 0.8 }), false));
     // 看板と提灯
-    add(g, T(plane(3.2, 0.9), HX, 2.5, z1 + 0.14), basic(signTexture('賭場', { w: 768, h: 216, bg: '#1c1d20', fg: '#f2c94c', radius: 10, family: '"Dela Gothic One",sans-serif' })));
+    add(g, T(plane(3.2, 0.9), HX, 2.5, z1 + 0.165), basic(signTexture('賭場', { w: 768, h: 216, bg: '#1c1d20', fg: '#f2c94c', radius: 10, family: '"Dela Gothic One",sans-serif' })));
     for (const x of [HALL.door[0] - 0.6, HALL.door[1] + 0.6]) {
       add(g, T(cyl(0.005, 0.005, 0.4, 4), x, 2.6, z1 + 0.4), black);
       add(g, T(sph(0.22, 16, 10), x, 2.3, z1 + 0.4, 0, 0, 0, 1, 1.4, 1), mat(0xffffff, { map: vtext('丁半', { w: 256, h: 256, bg: '#d62828', lantern: true, size: 70 }), r: 0.6, e: 0x5a0a0a, ei: 0.8 }));
@@ -199,7 +221,7 @@ export class World {
     const noren = vtext('', { w: 64, h: 64, bg: '#1c1d20' });
     for (let k = 0; k < 4; k++) { const p = M(T(plane(0.42, 0.9), HALL.door[0] + 0.24 + k * 0.45, 1.85, z1 + 0.16), basic(noren, { side: THREE.DoubleSide }), false); p.userData.noRay = true; this.root.add(p); }
     // 中のふすまの絵・掛け軸
-    add(g, T(plane(0.7, 1.6), x0 + 0.14, 1.2, HZ, 0, Math.PI / 2), basic(vtext('一攫千金', { w: 128, h: 448, bg: '#f2ead8', fg: '#1c1d20' })));
+    add(g, T(plane(0.7, 1.6), x0 + IN + 0.035, 1.2, HZ, 0, Math.PI / 2), basic(vtext('一攫千金', { w: 128, h: 448, bg: '#f2ead8', fg: '#1c1d20' })));
     const baked = bakeGroup(g); baked.traverse((o) => { if (o.isMesh) o.castShadow = !this.lite; }); this.root.add(baked);
     // 引き戸
     for (const s of [-1, 1]) {
@@ -254,8 +276,9 @@ export class World {
     for (const c of ALL_COLS) {
       if (!store.cols?.[c]) continue;
       const r = colRect(c), cx = (r.minX + r.maxX) / 2;
-      for (const z of [-5, -0.5, 3]) { lamps.push([cx - 1, z], [cx + 1, z]); }
-      this.lightSpots.push([cx, -4.5], [cx, 2]);
+      // 厨房（奥行き8m）に2列・客席に2列
+      for (const z of [BACK_Z + 2.2, KITCHEN_Z - 2.2, -0.5, 3]) { lamps.push([cx - 1, z], [cx + 1, z]); }
+      this.lightSpots.push([cx, BACK_Z + 2.5], [cx, KITCHEN_Z - 1.8], [cx, 2]);
     }
     const shade0 = C(0x2b2b2b, { r: 0.5 }), bulb = new THREE.MeshBasicMaterial({ color: 0xffe2a8, toneMapped: false });
     for (const [x, z] of lamps) { add(g, T(cyl(0.004, 0.004, 0.7, 4), x, CEIL - 0.7, z), shade0); add(g, T(cone(0.22, 0.2, 14), x, CEIL - 0.9, z), shade0); D.add(M(T(sph(0.07, 10, 8), x, CEIL - 0.92, z), bulb, false)); }
@@ -267,8 +290,10 @@ export class World {
     let near = false, nearH = false;
     for (const [x, z] of chars) { if (Math.abs(x - DOOR.x) < 2 && Math.abs(z - FRONT_Z) < 2.2) near = true; if (Math.abs(x - HX) < 2 && Math.abs(z - HALL.z1) < 2.2) nearH = true; }
     this.doorOpen += ((near ? 1 : 0) - this.doorOpen) * Math.min(1, dt * 6);
+    let nearB = false; for (const [x, z] of chars) if (Math.abs(x - (BACK_DOOR.x0 + BACK_DOOR.x1) / 2) < 1.4 && Math.abs(z - BACK_Z) < 1.8) nearB = true;
+    this.backOpen = (this.backOpen || 0) + ((nearB ? 1 : 0) - (this.backOpen || 0)) * Math.min(1, dt * 6);
     this.hallOpen += ((nearH ? 1 : 0) - this.hallOpen) * Math.min(1, dt * 6);
-    for (const d of this.doors) d.position.x = d.userData.base + d.userData.s * (d.userData.hall ? this.hallOpen : this.doorOpen) * d.userData.w * 0.95;
+    for (const d of this.doors) d.position.x = d.userData.base + d.userData.s * (d.userData.back ? this.backOpen : d.userData.hall ? this.hallOpen : this.doorOpen) * d.userData.w * 0.95;
     const h = (timeMin / 60) % 12, m = timeMin % 60;
     if (this.hourHand) { this.hourHand.rotation.z = -h / 12 * Math.PI * 2; this.minHand.rotation.z = -m / 60 * Math.PI * 2; }
     if (this.clouds) this.clouds.position.x = (this.clouds.position.x + dt * 0.6) % 80;

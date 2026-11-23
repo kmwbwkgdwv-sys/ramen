@@ -116,7 +116,8 @@ export class FirebaseRoom extends Emitter {
         await F.remove(this.p('act')); await F.remove(this.p('ev')); await F.remove(this.p('chat'));
         for (const k of Object.keys(pl)) if (k !== this.me) await F.remove(this.p('pl/' + k));
         F.onDisconnect(this.c.ref(`${DB_ROOT}rooms/${this.id}`)).remove();
-        this.hbTimer = setInterval(() => F.update(metaRef, { hb: this.now() }), 5000);
+        this._hbSent = Date.now();
+        this.hbTimer = setInterval(() => this.beat(true), 5000);
       } else { this.role = 'client'; this.host = res.snapshot.val()?.host; }
     }
     const myRef = this.p('pl/' + this.me);
@@ -147,6 +148,12 @@ export class FirebaseRoom extends Emitter {
       this.watch = setInterval(() => { if (Date.now() - this.lastHbAt > 25000) this.emit('closed', 'ホストとの接続が切れました'); }, 5000);
     }
     return { role: this.role };
+  }
+  // ホストの生存確認（4秒に1回まで）
+  beat(force = false) {
+    if (this.role !== 'host' || !this.c.F) return;
+    const now = Date.now(); if (!force && now - (this._hbSent || 0) < 4000) return;
+    this._hbSent = now; this.c.F.update(this.p('meta'), { hb: this.now() });
   }
   sendPlayer(st) { this.c.F.update(this.p('pl/' + this.me), st); }
   sendAction(a) { this.c.F.push(this.p('act'), { uid: this.me, a: JSON.stringify(a) }); }

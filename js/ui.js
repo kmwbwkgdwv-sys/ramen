@@ -3,6 +3,7 @@ import { yen, fmtDuration, formatCode, normalizeCode, randomCode, escapeText } f
 import { TRACKS, saveCustom, applySoundMode } from './audio.js';
 import { OPT, SKINS, HAIR_COLORS, CLOTH_COLORS, EYE_COLORS, randomAvatar, sanitizeAvatar } from './models/character.js';
 import { listOwnStores, switchStore, newOwnStore, deleteStore, MAX_OWN_STORES, bowlCount } from './save.js';
+import { totalProfit } from './sim.js';
 
 // ---------- DOMヘルパー ----------
 export function h(tag, props = {}, ...kids) {
@@ -152,7 +153,7 @@ export function showMenu(app) {
         h('div', { class: 'pc-name' }, '👤 ' + p.name),
         h('div', { class: 'pc-store' }, '🏪 ' + st.name),
         h('div', { class: 'pc-stats' },
-          stat('店レベル', 'Lv.' + st.level), stat('総売上', yen(st.totalSales)), stat('出したラーメン', `${bowlCount(p).toLocaleString()}杯`), stat('プレイ時間', fmtDuration(p.playTime))),
+          stat('店レベル', 'Lv.' + st.level), stat('総利益（賭場込み）', (totalProfit(st) < 0 ? '−' : '') + yen(Math.abs(totalProfit(st)))), stat('総売上', yen(st.totalSales)), stat('出したラーメン', `${bowlCount(p).toLocaleString()}杯`), stat('プレイ時間', fmtDuration(p.playTime))),
         sync),
       h('div', { class: 'menu-btns' },
         h('button', { class: 'btn big', onclick: () => showStores(app) }, '🏪 ひとりで経営'),
@@ -225,7 +226,7 @@ export function showRanking(app) {
   const mine = h('div', { class: 'rank-mine' });
   let field = 'lv';
   const tabs = h('div', { class: 'tabs' });
-  const T = [['lv', '🏪 店レベル'], ['c', '🍜 ラーメン杯数'], ['s', '💴 総売上'], ['p', '⏱ プレイ時間']];
+  const T = [['lv', '🏪 店レベル'], ['c', '🍜 ラーメン杯数'], ['g', '💰 総利益（賭場込み）'], ['p', '⏱ プレイ時間']];
   const load = async () => {
     tabs.innerHTML = '';
     for (const [k, n] of T) tabs.append(h('button', { class: 'tab' + (k === field ? ' on' : ''), onclick: () => { field = k; load(); } }, n));
@@ -255,7 +256,7 @@ function rankRow(rank, r, me) {
   return h('div', { class: 'rank-row' + (me ? ' me' : '') },
     h('div', { class: 'rk' }, String(medal)),
     h('div', { class: 'rn' }, h('div', { class: 'nm' }, (HAT_ICON[r.h] || '🙂') + ' ' + (r.n || '???')), h('div', { class: 'sn' }, '🏪 ' + (r.st || ''))),
-    h('div', { class: 'rv' }, h('span', {}, 'Lv.' + (r.lv || 1)), h('span', { class: 'dex' }, `🍜 ${(r.c || 0).toLocaleString()}杯`), h('span', {}, yen(r.s || 0)), h('span', {}, fmtDuration(r.p || 0))));
+    h('div', { class: 'rv' }, h('span', {}, 'Lv.' + (r.lv || 1)), h('span', { class: 'dex' }, `🍜 ${(r.c || 0).toLocaleString()}杯`), h('span', { class: 'rg' + ((r.g ?? 0) < 0 ? ' neg' : '') }, r.g == null ? '利益 —' : `💰 ${(r.g < 0 ? '−' : '') + yen(Math.abs(r.g))}`), h('span', {}, fmtDuration(r.p || 0))));
 }
 
 // ---------- 設定 ----------

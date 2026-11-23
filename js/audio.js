@@ -348,6 +348,8 @@ export class Sfx {
       case 'bell': tone(988, 0, 0.6, 'sine', 0.25); tone(784, 0.25, 0.8, 'sine', 0.25); break;
       case 'pick': tone(420, 0, 0.08, 'triangle', 0.25, 620); break;
       case 'place': tone(220, 0, 0.1, 'triangle', 0.3, 140); noise(0, 0.06, 0.08, 800); break;
+      case 'box': noise(0, 0.18, 0.1, 1200); tone(160, 0.02, 0.12, 'triangle', 0.2, 110); break;
+      case 'fridge': noise(0, 0.12, 0.12, 300); tone(90, 0, 0.14, 'sine', 0.35, 60); tone(1800, 0.02, 0.05, 'sine', 0.04); break;
       case 'stock': tone(700 + Math.random() * 200, 0, 0.05, 'triangle', 0.15); break;
       case 'trash': noise(0, 0.25, 0.2, 400); tone(160, 0, 0.2, 'sawtooth', 0.1, 80); break;
       case 'err': tone(220, 0, 0.12, 'square', 0.12); tone(180, 0.12, 0.15, 'square', 0.12); break;
