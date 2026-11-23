@@ -277,7 +277,7 @@ export const FIXTURES = {
   trash: F({ name: '生ゴミ箱', cat: 'service', icon: '🗑️', price: 1500, w: 0.5, d: 0.5, place: 'any', lv: 1, desc: '失敗した料理を捨てる（器は洗い物になる）' }),
   // ---- 防犯・防火 ----
   ext: F({ name: '消火器', cat: 'safety', icon: '🧯', price: 3000, w: 0.4, d: 0.4, place: 'any', lv: 1, desc: '手に持って長押しで消火。火事が大きくなる前に消そう' }),
-  shuriken: F({ name: '手裏剣ケース', cat: 'safety', icon: '✴️', price: 4000, w: 0.6, d: 0.4, place: 'any', lv: 3, desc: '手裏剣を8枚持てる。レジを狙う泥棒に投げて撃退しよう' }),
+  shuriken: F({ name: '手裏剣ケース', cat: 'safety', icon: '✴️', price: 4000, w: 0.6, d: 0.4, place: 'any', lv: 3, desc: '手裏剣を8枚持てる。レジを狙う泥棒に投げて撃退しよう（警備のアルバイトもここから手裏剣を取って投げる）' }),
   turret: F({ name: '警備タレット', cat: 'safety', icon: '🛡️', price: 60000, w: 0.6, d: 0.6, place: 'any', lv: 20, turret: { range: 7.5, cd: 1.4 }, desc: '近くに来た泥棒に自動で手裏剣を撃つ' }),
   // ---- 装飾 ----
   plant: F({ name: '観葉植物', cat: 'deco', icon: '🪴', price: 1500, w: 0.5, d: 0.5, place: 'any', lv: 1, desc: '店内に緑を' }),
@@ -362,6 +362,7 @@ export const STAFF_ROLES = {
   cook: { name: '調理', icon: '👨‍🍳', desc: 'スープを炊く・トッピングを仕込む・ラーメンとサイドを作って受け渡し台に置く' },
   hall: { name: '接客', icon: '🙋', desc: '受け渡し台の料理をお客さんに運び、食べ終わった食器を下げる' },
   wash: { name: '洗い場', icon: '🫧', desc: '下げた食器を洗って食器棚にもどす' },
+  guard: { name: '警備', icon: '🛡️', desc: '泥棒専用。レジの近くで見張り、泥棒が来たら手裏剣を投げたり取り押さえたりする（ほかの仕事はしない）' },
 };
 export const SPEEDS = [
   null,

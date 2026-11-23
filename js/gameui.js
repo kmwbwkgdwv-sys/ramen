@@ -89,7 +89,7 @@ export class GameUI {
     // 警告（火事・泥棒・ドローン）
     const al = [];
     if (dyn?.f?.length) al.push(['fire', `🔥 火事！ ${dyn.f.length}か所 → 🧯消火器で消そう`]);
-    if (dyn?.th && dyn.th[5] !== 'down') al.push(['thief', dyn.th[5] === 'run' ? '🥷 泥棒が逃げていく！手裏剣を当てよう' : '🥷 泥棒が券売機を狙っている！']);
+    if (dyn?.th && dyn.th[5] !== 'down') al.push(['thief', dyn.th[5] === 'run' ? '🥷 泥棒が逃げていく！手裏剣を当てよう' : '🥷 泥棒がレジを狙っている！']);
     if (dyn?.dl?.length) al.push(['drone', `🚁 ドローン配送中 ×${dyn.dl.length}（あと${Math.ceil(Math.min(...dyn.dl))}秒）`]);
     const dirtyS = store.fixtures.reduce((n, f) => n + (f.dd || []).filter((x) => x.length).length, 0);
     if (dirtyS >= 2) al.push(['dish', `🍽️ 片付けていない席 ${dirtyS}`]);
@@ -361,7 +361,8 @@ export class GameUI {
     const g = this.g, wrap = h('div');
     const wages = st.staff.reduce((t, o) => t + (o.wage || 0), 0);
     wrap.append(h('div', { class: 'wage-total' }, `💴 人件費 1日 ${yen(wages)}`, h('span', { class: 'muted small' }, `（${st.staff.length}人・閉店のときに払います）`)),
-      h('p', { class: 'muted small' }, `雇える人 ${staffLimit(st.level)} / ${STAFF_MAX}人（お店 Lv.3 から。先に🔑雇用ライセンスを買う）。人によって「調理」と「接客」のはやさがちがいます。仕事：🔄おまかせ・👨‍🍳調理・🙋接客（配膳と片付け）・🫧洗い場`));
+      h('p', { class: 'muted small' }, `雇える人 ${staffLimit(st.level)} / ${STAFF_MAX}人（お店 Lv.3 から。先に🔑雇用ライセンスを買う）。人によって「調理」と「接客」のはやさがちがいます。仕事：🔄おまかせ・👨‍🍳調理・🙋接客（配膳と片付け）・🫧洗い場・🛡️警備`),
+      h('p', { class: 'muted small' }, '🛡️ 泥棒の対処は役割を「警備」にした人だけがします（ほかの仕事はせず、レジの前で見張ります）。手裏剣ケースがあれば手裏剣を投げ、なければ走って取り押さえます。接客が早い人ほど足が速く、よく当たります'));
     const bar = (spd) => h('span', { class: 'spdbar' }, h('i', { style: { width: Math.round(SPEEDS[spd].k / 2 * 100) + '%' } }));
     const skills = (c, hl) => h('div', { class: 'skills' }, h('div', { class: 'sk' }, h('span', {}, '👨‍🍳 調理'), bar(c), h('b', {}, `${SPEEDS[c].icon}${SPEEDS[c].name}`)), h('div', { class: 'sk' }, h('span', {}, '🙋 接客'), bar(hl), h('b', {}, `${SPEEDS[hl].icon}${SPEEDS[hl].name}`)));
     const r = mulberry32(st.day * 7919 + st.staff.length * 31);

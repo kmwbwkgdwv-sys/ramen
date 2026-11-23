@@ -1056,6 +1056,7 @@ export class Sim {
     this.updateProj(dt);
     this.updateFires(dt);
     this.updateTurrets(dt);
+    this.assignGuards();
     for (const s of st.staff) this.updateStaff(s, dt);
     this.updateChohan(dt);
   }
@@ -1138,6 +1139,7 @@ export class Sim {
         break;
       }
       case 'run':
+        if (T.stun > 0) { T.stun -= dt; T.an = 'idle'; break; }
         if (stepPath(T, dt, T.spd)) {
           if (T.loot) { st.today.stolen += T.loot; this.toast(null, `🥷 泥棒に逃げられた…（−¥${T.loot.toLocaleString()}）`, 'err'); }
           this.dyn.thief = null; this.bump();
@@ -1150,16 +1152,18 @@ export class Sim {
     }
   }
   runAway(T) { const [sx, sz] = pick(SPAWN_POINTS); if (!this.goC(T, sx, sz)) T.path = [[sx, sz]]; T.pi = 0; T.an = 'walk'; }
-  hitThief(by) {
+  hitThief(by, grab = false) {
     const T = this.dyn.thief, st = this.store; if (!T || T.st === 'down') return;
     T.hp--; T.bub = 'hurt'; T.bt = 1.2;
+    if (grab) T.stun = 1.3; // 取り押さえられると少しのあいだ動けない
     this.sfx('hit', T.x, T.z);
     if (T.hp > 0) { if (T.st === 'steal') { T.st = 'run'; T.spd = 3.2; this.runAway(T); } return; }
     const bounty = 3000 + this.level * 400;
     st.money += T.loot + bounty; st.today.bounty += bounty; st.stats.thief++;
     T.st = 'down'; T.t = 3; T.an = 'down'; T.bub = 'ko'; T.bt = 99; T.path = null;
-    this.toast(null, `✴️ 泥棒を撃退した！${T.loot ? `盗まれた¥${T.loot.toLocaleString()}を取りもどし、` : ''}懸賞金 +¥${bounty.toLocaleString()}`, 'money');
-    this.sfx('cash'); T.loot = 0; this.bump(); void by;
+    const sf = String(by).startsWith('s:') ? this.store.staff.find((o) => 's:' + o.id === by) : null;
+    this.toast(null, `✴️ ${sf ? `警備の${sf.name}が` : ''}泥棒を撃退した！${T.loot ? `盗まれた¥${T.loot.toLocaleString()}を取りもどし、` : ''}懸賞金 +¥${bounty.toLocaleString()}`, 'money');
+    this.sfx('cash'); T.loot = 0; this.bump();
   }
   updateProj(dt) {
     const dyn = this.dyn;
@@ -1466,6 +1470,7 @@ export class Sim {
     let rt = dyn.staffRt[s.id];
     if (!rt) rt = dyn.staffRt[s.id] = { x: STAFF_HOME[0] + rand(-0.6, 0.6), z: STAFF_HOME[1] + rand(-0.6, 0.6), ry: 0, st: 'idle', t: rand(0.3, 1.5), path: null, pi: 0, an: 'idle', job: null };
     if (rt.bt > 0 && (rt.bt -= dt) <= 0) rt.bub = null;
+    if (rt.st === 'guard') return this.updateGuard(s, rt, dt, who);
     if (rt.st === 'walk') {
       const j = rt.job;
       if (!j || !this.jobValid(s, j)) { this.cancelJob(s, rt); return; }
@@ -1494,6 +1499,101 @@ export class Sim {
     if (dist(rt.x, rt.z, x, z) < 0.3 || this.goto(rt, x, z)) { rt.st = 'walk'; if (!rt.path) rt.path = [[x, z]]; }
     else { rt.job = null; this.unclaim(s); }
   }
+  // ---------- アルバイトの泥棒退治（「警備」の役割の人だけ） ----------
+  // 泥棒がレジに近づいたり、こじ開けたり逃げたりしているとき、警備のアルバイトが向かう。
+  // 手裏剣ケースがあれば手裏剣を取って投げ、なければ走って取り押さえる
+  thiefActive(T) {
+    if (!T || T.st === 'down') return false;
+    if (T.st === 'steal' || T.st === 'run') return true;
+    const f = this.fx(T.fid); return T.st === 'come' && !!f && dist(T.x, T.z, f.x, f.z) < 3.5;
+  }
+  assignGuards() {
+    const T = this.dyn.thief, st = this.store;
+    if (!this.thiefActive(T)) return;
+    const R = this.dyn.staffRt;
+    for (const o of st.staff) {
+      const rt = R[o.id], hd = this.hand('s:' + o.id);
+      if (o.role !== 'guard' || !rt || rt.st === 'guard' || (hd && hd.t !== 'shuri')) continue;
+      this.cancelJob(o, rt);
+      Object.assign(rt, { st: 'guard', cd: 0.4, rp: 0, an: 'walk', bub: 'alarm', bt: 1.5, path: null, tpx: T.x, tpz: T.z });
+      if (!T.gToast) { T.gToast = 1; this.toast(null, `🛡️ 警備の${o.name}が泥棒に向かっていった！`, 'warn'); }
+    }
+  }
+  // 警備の人の見張りの場所（レジの前、入口のほうを向く）
+  guardPost(s) {
+    const st = this.store, reg = st.fixtures.find((f) => f.t === 'register') || st.fixtures.find((f) => f.t === 'ticket'); if (!reg) return null;
+    const gs = st.staff.filter((o) => o.role === 'guard'), i = Math.max(0, gs.indexOf(s)), off = (i % 2 ? 1 : -1) * (0.75 + Math.floor(i / 2) * 0.7);
+    return localToWorld(reg, off, FIXTURES[reg.t].d / 2 + 0.85);
+  }
+  updateGuard(s, rt, dt, who) {
+    this._guardStep(s, rt, dt, who);
+    // ほかのアルバイトと重ならないように少し離れる
+    for (const o of this.store.staff) { const r = this.dyn.staffRt[o.id]; if (o === s || !r) continue; const dx = rt.x - r.x, dz = rt.z - r.z, d = Math.hypot(dx, dz); if (d < 0.5) { const k = (0.5 - d) / 2 / (d || 1); rt.x += (d ? dx : 0.3) * k; rt.z += (d ? dz : 0.1) * k; } }
+  }
+  _guardStep(s, rt, dt, who) {
+    const T = this.dyn.thief, st = this.store;
+    if (!this.thiefActive(T)) {
+      if (this.hand(who)?.t === 'shuri') this.setHand(who, null);
+      Object.assign(rt, { st: 'idle', t: 0.6, an: 'idle', path: null, job: null });
+      if (T?.st === 'down') { rt.bub = 'happy'; rt.bt = 2; }
+      return;
+    }
+    const k = staffK(s, 'hall'), spd = 2.5 + 0.75 * k;
+    const vx = (T.x - (rt.tpx ?? T.x)) / Math.max(dt, 1e-3), vz = (T.z - (rt.tpz ?? T.z)) / Math.max(dt, 1e-3); rt.tpx = T.x; rt.tpz = T.z;
+    rt.cd -= dt; rt.rp -= dt;
+    const chase = (x, z) => {
+      if (rt.rp <= 0 || !rt.path) { rt.rp = 0.35; if (!this.goto(rt, x, z)) rt.path = [[x, z]]; }
+      stepPath(rt, dt, spd); rt.an = 'walk';
+    };
+    let hd = this.hand(who);
+    const box = st.fixtures.filter((f) => f.t === 'shuriken' && !f.br).sort((a, b) => dist2(rt.x, rt.z, a.x, a.z) - dist2(rt.x, rt.z, b.x, b.z))[0];
+    // 手裏剣を取りに行く（泥棒のほうが近ければそのまま取り押さえに行く）
+    const gi = st.staff.filter((o) => this.dyn.staffRt[o.id]?.st === 'guard').indexOf(s), side = gi % 2 ? 0.22 : -0.22;
+    const [bx, bz] = box ? localToWorld(box, side, FIXTURES[box.t].d / 2 + 0.45) : [0, 0];
+    if (!hd && box && dist(rt.x, rt.z, bx, bz) < dist(rt.x, rt.z, T.x, T.z)) {
+      if (dist(rt.x, rt.z, bx, bz) < 0.35) { this.setHand(who, { t: 'shuri', n: 8 }); this.sfx('pick', rt.x, rt.z); this.bump(); rt.cd = 0.3; rt.path = null; }
+      else chase(bx, bz);
+      return;
+    }
+    const d = dist(rt.x, rt.z, T.x, T.z);
+    if (hd?.t === 'shuri' && d >= 0.8) {
+      // 届く距離で、間にお客さんや壁がなければ投げる
+      if (d < 8 && this.throwClear(rt.x, rt.z, T.x, T.z)) {
+        rt.path = null; rt.ry = Math.atan2(T.x - rt.x, T.z - rt.z); rt.an = 'throw';
+        if (rt.cd <= 0) {
+          const lead = d / 17, ax = T.x + clamp(vx, -4, 4) * lead, az = T.z + clamp(vz, -4, 4) * lead;
+          const ang = Math.atan2(ax - rt.x, az - rt.z) + rand(-0.13, 0.13) / Math.max(0.5, k);
+          this.dyn.proj.push({ id: this.dyn.pid++, x: rt.x + Math.sin(ang) * 0.3, z: rt.z + Math.cos(ang) * 0.3, y: 1.3, vx: Math.sin(ang) * 17, vz: Math.cos(ang) * 17, t: 0.75, by: who });
+          this.sfx('throw', rt.x, rt.z);
+          hd.n--; if (hd.n <= 0) this.setHand(who, null);
+          rt.cd = 1.05 / k; this.bump();
+        }
+      } else chase(T.x, T.z);
+      return;
+    }
+    // 手裏剣がないとき・すぐそばにいるときは走って取り押さえる
+    if (d < 0.8) {
+      rt.path = null; rt.ry = Math.atan2(T.x - rt.x, T.z - rt.z); rt.an = 'throw';
+      if (rt.cd <= 0) { rt.cd = Math.min(1.15, 0.7 / k); this.hitThief(who, true); }
+    } else chase(T.x, T.z);
+  }
+  // 手裏剣を投げても大丈夫か（間にお客さん・壁・背の高い設備がない）
+  throwClear(ax, az, bx, bz) {
+    const st = this.store, L = dist(ax, az, bx, bz); if (L < 0.01) return true;
+    for (const c of this.dyn.customers) {
+      if (c.st === 'out' || c.gone) continue;
+      const t = clamp(((c.x - ax) * (bx - ax) + (c.z - az) * (bz - az)) / (L * L), 0, 1);
+      if (t > 0.05 && dist(c.x, c.z, ax + (bx - ax) * t, az + (bz - az) * t) < 0.6) return false;
+    }
+    const walls = getWalls(st), tall = st.fixtures.filter((f) => TALL_FIX.has(f.t)).map((f) => fixtureFootprint(f.t, f.x, f.z, f.r));
+    const n = Math.ceil(L / 0.25);
+    for (let i = 1; i < n; i++) {
+      const x = ax + (bx - ax) * i / n, z = az + (bz - az) * i / n;
+      for (const r of walls) if (x > r.minX - 0.05 && x < r.maxX + 0.05 && z > r.minZ - 0.05 && z < r.maxZ + 0.05) return false;
+      for (const r of tall) if (x > r.minX && x < r.maxX && z > r.minZ && z < r.maxZ) return false;
+    }
+    return true;
+  }
   unclaim(s) { for (const c of this.dyn.customers) for (const l of c.lines || []) if (l.cl === s.id) l.cl = null; }
   cancelJob(s, rt) { this.unclaim(s); rt.job = null; rt.st = 'idle'; rt.t = 0.5; rt.path = null; }
   jobValid(s, j) { const f = j.fid != null ? this.fx(j.fid) : null; if (j.fid != null && (!f || f.br)) return false; if (j.c && !['seated', 'eat'].includes(j.c.st)) return false; return true; }
@@ -1512,6 +1612,14 @@ export class Sim {
     if (hd?.t === 'dirty') { const sk = F((f) => FIXTURES[f.t].sink); return sk ? job('sinkput', sk, 0.5, 'hall') : null; }
     if (hd?.t === 'clean') { const rk = F((f) => FIXTURES[f.t].rack); return rk ? job('rackput', rk, 0.5, 'hall') : null; }
     if (hd) { this.setHand(who, null); return null; }
+    // 警備：ほかの仕事はせず、レジの前で見張る
+    if (role === 'guard') {
+      const p = this.guardPost(s); if (!p || dist(rt.x, rt.z, p[0], p[1]) < 0.4) { if (p) rt.ry = Math.atan2(DOOR.x - rt.x, FRONT_Z - rt.z); return null; }
+      return { kind: 'post', spot: p, face: [DOOR.x, FRONT_Z], dur: 0.3, skill: 'hall' };
+    }
+    // 空焚き（だしが空のまま火がついている）は、だれでも先に火を止める
+    const dryPot = F((f) => f.pot && !(f.pot.w > 0) && f.pot.fire && !st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.kind === 'fireoff' && this.dyn.staffRt[o.id].job.fid === f.id));
+    if (dryPot) return job('fireoff', dryPot, 0.5, 'cook');
     const cookJobs = () => this.findCookJob(s, rt, F, job);
     const hallJobs = () => {
       // 受け渡し台の料理を運ぶ
@@ -1766,6 +1874,8 @@ export class Sim {
   }
 }
 
+// 手裏剣を通さない背の高い設備
+const TALL_FIX = new Set(['fridge', 'fridge2', 'dishrack', 'ticket', 'slot', 'aquarium', 'shuriken']);
 // 座っている姿勢（座敷は正座）
 const sitAn = (c, eat = false) => (c.zen ? 'z' : '') + (eat ? 'eat' : 'sit');
 export function stepPath(e, dt, spd) {
