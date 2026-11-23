@@ -1,0 +1,874 @@
+// ===== ゲームセッション（操作・同期・描画の橋渡し） =====
+import * as THREE from 'three';
+import { Sim, fitPlacement, potReady, soupQuality, griddleQ, beerQ, repairCost, fridgeCap, fridgeUsed, evalDish } from './sim.js';
+import {
+  FIXTURES, SOUPS, TOPPINGS, SIDES, GRIDDLE, HARD, DISHES, INGREDIENTS, GAMBLES, PLAYER_BOUNDS, PLAYER_SPAWN, BUILDING, HALL, STAFF_ROLES, SOUP_READY, SOUP_RICH, RICE_READY, NOODLE_OVER, DIRTY_MAX,
+  getWalls, fixtureFootprint, snapFixture, worldToLocal, localToWorld, pickSeat, pickBasket, pickPass, basketPos, isCounter, noodleLabel, inHall,
+} from './data.js';
+import { clamp, yen, dist, angleLerp, lerp, escapeText } from './util.js';
+import { toast, h, modal, confirmBox } from './ui.js';
+import { sanitizeAvatar } from './models/character.js';
+import { CEIL } from './render.js';
+
+const RAY = new THREE.Raycaster();
+const V2 = new THREE.Vector2();
+const REACH = 2.4;
+export const CRITIC_AV = { skin: '#f1b98c', hair: 'none', hairColor: '#2b1d16', eyes: 'cool', mouth: 'flat', brow: 'thick', blush: false, hat: 'none', acc: 'sun', top: 'suit', topColor: '#2b2d42', bottom: 'pants', bottomColor: '#2b2d42', shoeColor: '#111111', height: 1.04 };
+const THIEF_AV = { skin: '#f1b98c', hair: 'short', hairColor: '#2b1d16', eyes: 'angry', mouth: 'flat', brow: 'thick', hat: 'beanie', hatColor: '#1c1d20', acc: 'mask', top: 'hoodie', topColor: '#26272b', bottom: 'pants', bottomColor: '#1c1d20', shoeColor: '#111111', height: 1 };
+const DEALER_AV = { skin: '#d99b6c', hair: 'sidepart', hairColor: '#2b1d16', eyes: 'cool', mouth: 'flat', brow: 'thick', hat: 'hachimaki', hatColor: '#ffffff', acc: 'none', top: 'suit', topColor: '#1c1d20', bottom: 'pants', bottomColor: '#1c1d20', shoeColor: '#111111', height: 1 };
+const SOUP_NAME = (k) => SOUPS[k]?.name || '';
+// 料理の中身の説明
+export function dishText(d) {
+  if (!d) return '';
+  const D = DISHES[d.k]?.name || '器';
+  if (d.k === 'bowl') {
+    if (!d.soup) return `🍜 空の${D}`;
+    const men = d.men != null ? `・麺 ${d.men.toFixed(0)}秒（${noodleLabel(d.men)}）` : '・麺なし';
+    const tp = (d.tp || []).map((t) => TOPPINGS[t]?.icon).join('');
+    return `🍜 ${SOUP_NAME(d.soup)}スープ${men}${tp ? '・' + tp : ''}`;
+  }
+  if (d.k === 'bowlS') return d.side === 'rice' ? `🍚 ライス${(d.tp || []).includes('chashu') ? '＋チャーシュー（チャーシュー丼）' : ''}` : `🍚 空の${D}`;
+  if (d.k === 'plate') return d.side ? `${SIDES[d.side]?.icon}${SIDES[d.side]?.name}（${d.burnt ? '焦げ' : (d.q ?? 0) + '点'}）` : `🍽️ 空の${D}`;
+  if (d.k === 'mug') return d.side === 'beer' ? `🍺 生ビール ${Math.round((d.fill || 0) * 100)}%（${beerQ(d.fill)}点）` : `🍺 空の${D}`;
+  return D;
+}
+const lineName = (st, l) => (l[0] === 'ramen' ? st.menu.find((m) => m.id === l[1])?.name || 'ラーメン' : SIDES[l[0]]?.name || l[0]);
+
+export class Game {
+  constructor(app, opts) {
+    const { mode, room, roomId } = opts;
+    this.app = app; this.mode = mode; this.room = room; this.roomId = roomId;
+    this.me = app.profile.pid;
+    this.R = app.renderer; this.input = app.input; this.ui = app.gameUI;
+    this.ui.bind(this);
+    this.players = {}; this.local = !!opts.local;
+    if (mode !== 'client') { this.sim = new Sim(app.profile.store); this.store = this.sim.store; this.sim.players[this.me] = { x: 0, z: 0, name: app.profile.name }; this.sim.custCap = app.renderer.lite ? 24 : 40; }
+    else this.store = null;
+    this.dyn = null; this.dynAt = 0;
+    const [sx, sz] = PLAYER_SPAWN;
+    this.pc = { x: sx + (Math.random() - 0.5), z: sz, y: 0, vy: 0, ry: Math.PI, yaw: 0.2, pitch: 0.25, grounded: true };
+    this.state = 'walk';
+    this.build = { sel: null, moving: null, r: 0, x: 0, z: 0, ok: false };
+    this.timers = { net: 0, store: 0, dyn: 0, save: 0, rank: 0, repeat: 0, live: 0 };
+    this.lastParts = {}; this.chat = {}; this.colRev = -1; this.hold = {};
+    this.selOrder = null;
+    this.setUIBlock(false);
+    this.camDist = 3.2;
+    if (room) this._bindRoom();
+    this.ui.show(true);
+    this.input.setRoom(!!room);
+    this.input.wheelOff = this.input.on('wheel', (d) => { this.camDist = clamp(this.camDist + d * 0.4, 1.6, 6); });
+    if (room) this.ui.setRoom([h('b', {}, '👥 ルーム ' + roomId), h('span', { class: 'plist2' })]);
+    if (!this.app.profile.tutorialDone && mode !== 'client') setTimeout(() => { if (this.app.game === this) this.help(true); }, 600);
+    setTimeout(() => { const st = this.store; if (st && st.day === 1 && st.phase === 'prep') toast('🍜 寸胴鍋のスープはもう炊けています。外の札を「営業中」にして、お客さんの注文を作ろう！', 'ok', 5500); }, 2500);
+  }
+  _bindRoom() {
+    const R = this.room;
+    R.on('players', (pl) => {
+      const prev = this.players; this.players = {};
+      for (const [uid, p] of Object.entries(pl)) {
+        if (uid === this.me) continue;
+        let av = p.av; if (typeof av === 'string') { try { av = JSON.parse(av); } catch (e) { av = null; } }
+        this.players[uid] = { ...p, av: sanitizeAvatar(av) };
+        if (this.sim) this.sim.players[uid] = { x: p.x, z: p.z, name: p.n };
+        if (!prev[uid]) toast(`👋 ${p.n || '???'} さんが参加しました`, 'ok');
+      }
+      for (const uid of Object.keys(prev)) if (!this.players[uid]) { toast(`${prev[uid].n || '???'} さんが退出しました`); if (this.sim) this.sim.playerLeft(uid); }
+      const names = [this.app.profile.name, ...Object.values(this.players).map((p) => p.n)];
+      const el = this.ui.roomInfo.querySelector('.plist2'); if (el) el.textContent = ` ${names.length}/4人：` + names.join('・');
+    });
+    R.on('action', ({ uid, a }) => { if (this.sim) { try { this.sim.act(uid, typeof a === 'string' ? JSON.parse(a) : a); } catch (e) { console.warn(e); } } });
+    R.on('store', (parts) => {
+      try {
+        let changed = false;
+        for (const k of ['core', 'fx']) if (parts[k] && parts[k] !== this.lastParts[k]) { this.lastParts[k] = parts[k]; changed = true; }
+        if (!changed || !this.lastParts.core || !this.lastParts.fx) return;
+        const core = JSON.parse(this.lastParts.core);
+        const st = { ...core, fixtures: JSON.parse(this.lastParts.fx) };
+        st.rev = (this.store?.rev || 0) + 1;
+        st.time = this.dyn?.time ?? this.store?.time ?? core.time ?? 600;
+        const prevPhase = this.store?.phase;
+        this.store = st;
+        if (this.roomId) this.app.rememberRoom(this.roomId, st);
+        if (prevPhase === 'summary' && st.phase !== 'summary') this.ui.closeSummary();
+        this.ui.refresh();
+      } catch (e) { console.warn('store parse', e); }
+    });
+    R.on('dyn', (d) => { this.dyn = d; this.dynAt = performance.now(); if (this.store) this.store.time = d.time; });
+    R.on('event', (e) => { try { this.handleEvent(typeof e === 'string' ? JSON.parse(e) : e); } catch (err) { console.warn(err); } });
+    R.on('chat', (c) => this.onChat(c));
+    R.on('closed', (why) => { if (this._closing) return; this._closing = true; toast('⚠ ' + why, 'warn', 4000); this.app.endGame(true); });
+    if (R.requestState) { R.requestState(); setTimeout(() => { if (this.app.game === this && !this.store) R.requestState(); }, 300); }
+    this._stateRetry = setInterval(() => { if (this.app.game !== this) return clearInterval(this._stateRetry); if (!this.store && R.requestState) R.requestState(); else if (this.store) clearInterval(this._stateRetry); }, 2000);
+  }
+  // ゲーム内の時計（秒）。参加した側はホストの時計＋受け取ってからの時間
+  clk() { if (this.sim) return this.sim.clk; if (!this.dyn) return 0; return this.dyn.clk + Math.min(1, (performance.now() - this.dynAt) / 1000); }
+  setUIBlock(v) { this.uiBlock = v; this.input.uiBlock = v; if (v) this.input.releasePointer(); }
+  act(a) { if (this.sim) this.sim.act(this.me, a); else if (this.room) this.room.sendAction(a); }
+
+  // ---------- イベント ----------
+  handleEvent(e) {
+    const me = this.me;
+    switch (e.t) {
+      case 'toast': if (!e.to || e.to === me) toast(e.msg, e.kind); break;
+      case 'sfx': {
+        if (e.to && e.to !== me) break;
+        let v = 1; if (e.x != null) v = clamp(1.1 - dist(e.x, e.z, this.pc.x, this.pc.z) / 20, 0.08, 1);
+        this.app.sfx.play(e.s, v); break;
+      }
+      case 'levelup':
+        toast(e.max ? `👑 最高レベル Lv.${e.level} に到達！` : `🎉 レベルアップ！ お店 Lv.${e.level}`, 'level', 3500);
+        if (e.unlocks?.length) setTimeout(() => toast(`🆕 できるようになったこと：${e.unlocks.map((u) => u.icon + u.name).join('・')}`, 'ok', 6500), 1200);
+        break;
+      case 'spray': this.R.sprayFx?.(e.x, 1.1, e.z, e.tx, e.tz, e.n || 10); { const now = performance.now(); if (now - (this._sprSfx || 0) > 280) { this._sprSfx = now; this.app.sfx.play('spray', clamp(1.1 - dist(e.x, e.z, this.pc.x, this.pc.z) / 18, 0.1, 1)); } } break;
+      case 'summary': this.ui.closeAll(); this.ui.showSummary(e.data, this.mode !== 'client'); if (this.sim) this.app.saveGame(true); break;
+      case 'newday': this.ui.closeSummary(); toast(`☀️ ${e.day}日目の朝！仕込みをしたら外の札を「営業中」にしよう`, 'ok', 3600); break;
+      case 'sale': { this._sale = (this._sale || 0) + e.total; clearTimeout(this._saleT); this._saleT = setTimeout(() => { toast(`🎫 食券 +${yen(this._sale)}`, 'money', 1300); this._sale = 0; }, 250); break; }
+      case 'review': {
+        const r = e.r, now = performance.now();
+        if (!r || (r.s > 1 && r.s < 5) || now - (this._rvT || 0) < 25000) break;
+        this._rvT = now; toast(`💬 口コミ ${'★'.repeat(r.s)}${'☆'.repeat(5 - r.s)}「${r.m}」`, r.s <= 2 ? 'warn' : 'ok', 3200); break;
+      }
+      case 'critic': this.ui.showCritic(e); break;
+      case 'gamble': if (e.to === me) this.ui.onGamble(e); else if (e.net > 50000) toast(`🎲 仲間が賭場で ${yen(e.net)} 勝った！`, 'money'); break;
+      case 'yugiri': if (e.who === me) toast(`♨️ 湯切り！ 麺 ${e.sec.toFixed(0)}秒（${noodleLabel(e.sec)}）`, '', 1500); break;
+      default: break;
+    }
+  }
+  onChat(c) { this.ui.addChat(c); this.chat[c.uid] = { text: String(c.m || '').slice(0, 40), t: 5 }; if (c.uid !== this.me) this.app.sfx.play('chat'); }
+  sendChat(text) { if (this.room) this.room.sendChat({ uid: this.me, n: this.app.profile.name, m: text.slice(0, 60) }); }
+
+  // ---------- 毎フレーム ----------
+  update(dt) {
+    if (this.sim) {
+      this.sim.players[this.me] = { x: this.pc.x, z: this.pc.z, name: this.app.profile.name };
+      this.sim.tick(dt);
+      this.dyn = this.sim.dynSnapshot(); this.dynAt = performance.now();
+      if (this.sim.events.length) { const evs = this.sim.events.splice(0); for (const e of evs) { this.handleEvent(e); if (this.room) this.room.sendEvent(e); } }
+    }
+    if (!this.store) { this.R.camera.position.set(0, 8, 20); this.R.camera.lookAt(0, 1, 0); this.ui.setHint('ホストの店に接続中…'); return; }
+    const inp = this.input.poll();
+    this._collisions();
+    if (inp.edges.has('menu')) { if (this.state === 'build') this.toggleBuild(false); else this.ui.openPause(); }
+    if (inp.edges.has('chat') && this.room) this.ui.openChat();
+    if (inp.edges.has('tab') && this.state !== 'build' && !this.ui.open) this.ui.openRep();
+    if (inp.edges.has('cam')) { this.app.settings.cam = this.app.settings.cam === 'first' ? 'third' : 'first'; this.app.applySettings(); }
+    if (inp.edges.has('build')) this.toggleBuild(this.state !== 'build');
+    if (inp.edges.has('binder') && this.state === 'walk') this.ui.toggleOrders();
+    this._updateWalk(dt, inp);
+    this._net(dt);
+    this._render(dt);
+    this.ui.updateHUD(dt, this.store, this.dyn);
+    this.ui.updateOrders(this.store, this.dyn, this.clk(), this.selOrder);
+    this.timers.live += dt;
+    if (this.timers.live > 1) { this.timers.live = 0; this.ui.live(); }
+    this.app.profile.playTime += dt;
+    if (this.sim) { this.timers.save += dt; if (this.timers.save > 20) { this.timers.save = 0; this.app.saveGame(false); } }
+    this.timers.rank += dt; if (this.timers.rank > 90) { this.timers.rank = 0; this.app.pushRank(); }
+  }
+  _collisions() {
+    const st = this.store;
+    if (st.rev === this.colRev) return;
+    this.colRev = st.rev;
+    this.rects = [...getWalls(st), ...this.R.world.obstacles];
+    for (const f of st.fixtures) { if (FIXTURES[f.t]?.air) continue; const fp = fixtureFootprint(f.t, f.x, f.z, f.r); this.rects.push({ minX: fp.minX + 0.04, maxX: fp.maxX - 0.04, minZ: fp.minZ + 0.04, maxZ: fp.maxZ - 0.04, fx: true }); }
+  }
+  _move(dx, dz) {
+    const p = this.pc, r = 0.26;
+    p.x += dx; p.z += dz;
+    for (let it = 0; it < 3; it++) for (const b of this.rects) {
+      if (p.y > 1.2 && b.fx) continue;
+      const cx = clamp(p.x, b.minX, b.maxX), cz = clamp(p.z, b.minZ, b.maxZ);
+      const ddx = p.x - cx, ddz = p.z - cz, d2 = ddx * ddx + ddz * ddz;
+      if (d2 < r * r) {
+        if (d2 > 1e-8) { const d = Math.sqrt(d2), k = (r - d) / d; p.x += ddx * k; p.z += ddz * k; }
+        else { const o = [[b.minX - r - p.x, 0], [b.maxX + r - p.x, 0], [0, b.minZ - r - p.z], [0, b.maxZ + r - p.z]]; o.sort((a, c) => Math.abs(a[0] + a[1]) - Math.abs(c[0] + c[1])); p.x += o[0][0]; p.z += o[0][1]; }
+      }
+    }
+    p.x = clamp(p.x, PLAYER_BOUNDS.minX, PLAYER_BOUNDS.maxX); p.z = clamp(p.z, PLAYER_BOUNDS.minZ, PLAYER_BOUNDS.maxZ);
+  }
+  get inside() { const p = this.pc; return (p.x > BUILDING.minX && p.x < BUILDING.maxX && p.z > BUILDING.minZ && p.z < BUILDING.maxZ) || inHall(p.x, p.z); }
+  _camera(dt) {
+    const p = this.pc, cam = this.R.camera, s = this.app.settings, height = this.app.profile.av.height || 1;
+    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
+    if (s.cam === 'first') {
+      this._bobT = (this._bobT || 0) + (this.moving && p.grounded ? dt * 9.5 : 0);
+      this._bobA = lerp(this._bobA || 0, this.moving && p.grounded ? 1 : 0, Math.min(1, dt * 8));
+      const by = Math.abs(Math.sin(this._bobT)) * 0.035 * this._bobA, bx = Math.cos(this._bobT) * 0.018 * this._bobA;
+      this.fpBob = -by * 0.6;
+      const ey = p.y + 1.6 * height + by, ex = p.x + Math.cos(p.yaw) * bx, ez = p.z - Math.sin(p.yaw) * bx;
+      cam.position.set(ex, ey, ez);
+      cam.lookAt(ex + fx * Math.cos(p.pitch), ey - Math.sin(p.pitch), ez + fz * Math.cos(p.pitch));
+      return;
+    }
+    const rx = -Math.cos(p.yaw), rz = Math.sin(p.yaw), sh = 0.42;
+    const tx = p.x + rx * sh, ty = p.y + 1.55 * height, tz = p.z + rz * sh;
+    let d = this.camDist;
+    const dirx = -fx * Math.cos(p.pitch), diry = Math.sin(p.pitch), dirz = -fz * Math.cos(p.pitch);
+    for (let k = 0.3; k <= d; k += 0.1) {
+      const x = tx + dirx * k, y = ty + diry * k, z = tz + dirz * k;
+      if ((this.inside && y > CEIL - 0.1) || this.rects.some((b) => !b.fx && x > b.minX - 0.15 && x < b.maxX + 0.15 && z > b.minZ - 0.15 && z < b.maxZ + 0.15 && y < 4.3)) { d = Math.max(0.4, k - 0.15); break; }
+    }
+    this._cd = this._cd == null ? d : Math.min(d, this._cd + dt * 4); d = this._cd;
+    cam.position.set(tx + dirx * d, ty + diry * d, tz + dirz * d);
+    cam.lookAt(tx, ty, tz);
+  }
+  _updateWalk(dt, inp) {
+    const p = this.pc, s = this.app.settings;
+    p.yaw -= inp.look.x; p.pitch = clamp(p.pitch + inp.look.y, -1.1, 1.3);
+    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw), rx = -Math.cos(p.yaw), rz = Math.sin(p.yaw);
+    const sp = (inp.run ? 5.4 : 3.4) * (this.state === 'build' ? 1.1 : 1);
+    const mx = (fx * inp.move.y + rx * inp.move.x) * sp * dt, mz = (fz * inp.move.y + rz * inp.move.x) * sp * dt;
+    this.moving = Math.hypot(mx, mz) > 1e-4;
+    if (this.moving) { this._move(mx, mz); if (s.cam !== 'first') p.ry = angleLerp(p.ry, Math.atan2(mx, mz), Math.min(1, dt * 12)); }
+    if (s.cam === 'first') p.ry = p.yaw;
+    if (inp.edges.has('jump') && p.grounded) { p.vy = 4.6; p.grounded = false; this.app.sfx.play('jump', 0.5); }
+    p.vy -= 13 * dt; p.y += p.vy * dt;
+    if (p.y <= 0) { p.y = 0; p.vy = 0; p.grounded = true; }
+    this._camera(dt);
+    if (this.state === 'build') return this._updateBuild(dt, inp);
+    this._interact(dt, inp);
+  }
+
+  // ---------- 狙っている物 ----------
+  _target() {
+    const cam = this.R.camera, p = this.pc;
+    V2.set(0, 0); RAY.setFromCamera(V2, cam); RAY.far = 12;
+    RAY.near = this.app.settings.cam === 'first' ? 0.05 : Math.max(0.05, (this._cd || 3) - 0.4);
+    const hit = this.R.pick(RAY);
+    RAY.near = 0;
+    const hd = this.hand();
+    if (hit) {
+      const front = (hit.point.x - p.x) * Math.sin(p.yaw) + (hit.point.z - p.z) * Math.cos(p.yaw);
+      const f = hit.type === 'fixture' ? this.fx(hit.fid) : null;
+      const big = f && (FIXTURES[f.t].gamble || f.t === 'pc' || f.t === 'opensign' || f.t === 'ticket' || FIXTURES[f.t].seats) ? 0.8 : 0;
+      if (front > -0.15 && dist(hit.point.x, hit.point.z, p.x, p.z) <= REACH + big) {
+        if (f) {
+          const [lx, lz] = worldToLocal(f, hit.point.x, hit.point.z), def = FIXTURES[f.t];
+          hit.f = f; hit.lx = lx; hit.lz = lz;
+          this._subTarget(hit, hd);
+        }
+        if (!(hd?.t === 'dish' && f && !FIXTURES[f.t].seats && !this.cookTarget(f) && this._custNear())) return hit;
+      }
+    }
+    // 料理を持っているときは、近くのお客さんを狙いやすく
+    if (hd?.t === 'dish' || hd?.t === 'dirty') { const c = this._custNear(); if (c) return c; }
+    if (!this.heldCrate() && !hd) {
+      let best = null, bd = 1.9;
+      for (const c of this.store.crates || []) {
+        if (c.loc.t !== 'f') continue;
+        const d = dist(c.loc.x, c.loc.z, p.x, p.z), ang = Math.abs(angleLerp(0, Math.atan2(c.loc.x - p.x, c.loc.z - p.z) - p.yaw, 1));
+        if (d < bd && ang < 0.9) { bd = d; best = c; }
+      }
+      if (best) return { type: 'crate', cid: best.id, point: { x: best.loc.x, y: 0.4, z: best.loc.z } };
+    }
+    // 狙いアシスト：まん中に何もなくても、前にある近くの設備を選ぶ
+    if (this.app.settings.assist !== false) return this._assist(hd);
+    return null;
+  }
+  // タッチ：画面の設備をタップすると、その設備の「行動」をする
+  _tapAct(tp) {
+    const cv = this.R.canvas, r = cv?.getBoundingClientRect ? cv.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+    V2.set(((tp.x - r.left) / r.width) * 2 - 1, -((tp.y - r.top) / r.height) * 2 + 1);
+    RAY.setFromCamera(V2, this.R.camera); RAY.far = 12; RAY.near = this.app.settings.cam === 'first' ? 0.05 : Math.max(0.05, (this._cd || 3) - 0.4);
+    const hit = this.R.pick(RAY); RAY.near = 0;
+    if (!hit || hit.type !== 'fixture') return;
+    const f = this.fx(hit.fid); if (!f) return;
+    const fp = fixtureFootprint(f.t, f.x, f.z, f.r), d = dist(clamp(this.pc.x, fp.minX, fp.maxX), clamp(this.pc.z, fp.minZ, fp.maxZ), this.pc.x, this.pc.z);
+    if (d > REACH) { toast(`${FIXTURES[f.t].icon} ${FIXTURES[f.t].name}：もう少し近づこう`, '', 1500); return; }
+    const [lx, lz] = worldToLocal(f, hit.point.x, hit.point.z); Object.assign(hit, { f, lx, lz });
+    this._subTarget(hit, this.hand());
+    const A = this._actions(hit);
+    if (A.act) { A.act.fn(); this.reachT = 0.4; this.R.setHighlight(f.id, null); } else if (A.hint) toast(A.hint, '', 2000);
+  }
+  // 設備の中のどこ（席・てぼ・受け渡し台の場所）を使うか。持っている物に合わせて選びなおす
+  _subTarget(hit, hd) {
+    const f = hit.f, def = FIXTURES[f.t], lx = hit.lx, lz = hit.lz;
+    if (def.seats) { hit.si = pickSeat(f.t, lx, lz); if (hd?.t === 'dish') { const b = this._bestSeat(f, hd.d, hit.si); if (b != null) hit.si = b; } else if (!hd && !(f.dd?.[hit.si]?.length)) { const k = (f.dd || []).findIndex((a) => a?.length); if (k >= 0 && !this.orderAt(f.id, hit.si)) hit.si = k; } }
+    if (def.baskets) { hit.bi = pickBasket(f.t, lx, lz); hit.bi = this._bestBasket(f, hd, hit.bi); }
+    if (def.pass) hit.pi = pickPass(f.t, lx);
+    return hit;
+  }
+  _assist(hd) {
+    const p = this.pc, guideF = this._guideNow?.f?.id;
+    let best = null, bs = Infinity;
+    for (const f of this.store.fixtures) {
+      const def = FIXTURES[f.t]; if (!def || ['deco', 'sign'].includes(def.cat) || def.air) continue;
+      const fp = fixtureFootprint(f.t, f.x, f.z, f.r), cx = clamp(p.x, fp.minX, fp.maxX), cz = clamp(p.z, fp.minZ, fp.maxZ), d = dist(cx, cz, p.x, p.z);
+      if (d > REACH - 0.6) continue;
+      const ang = d < 0.3 ? 0 : Math.abs(angleLerp(0, Math.atan2(cx - p.x, cz - p.z) - p.yaw, 1));
+      if (ang > 0.75) continue;
+      const sc = d + ang * 1.4 - (f.id === guideF ? 0.6 : 0);
+      if (sc < bs) { bs = sc; best = { f, x: cx, z: cz }; }
+    }
+    if (!best) return null;
+    const f = best.f, [lx, lz] = worldToLocal(f, best.x, best.z), hit = { type: 'fixture', fid: f.id, f, lx, lz, assist: true, point: { x: best.x, y: 0.9, z: best.z } };
+    return this._subTarget(hit, hd);
+  }
+  // 料理を持って席を狙ったとき：その料理を待っているお客さんの席を選ぶ
+  _bestSeat(f, d, si) {
+    const st = this.store, fits = (o) => o && o[5].some((l) => !l[3] && (l[0] === 'ramen' ? d.k === 'bowl' && st.menu.find((m) => m.id === l[1])?.soup === d.soup : l[0] === 'beer' ? d.k === 'mug' : (l[0] === 'rice' || l[0] === 'chadon') ? d.k === 'bowlS' : d.k === 'plate' && d.side === l[0]));
+    if (fits(this.orderAt(f.id, si))) return si;
+    const n = FIXTURES[f.t].seats.length;
+    for (let i = 0; i < n; i++) if (fits(this.orderAt(f.id, i))) return i;
+    return null;
+  }
+  // 丼（スープ入り・麺なし）を持っているときは、注文の固さにいちばん近いてぼを選ぶ
+  _bestBasket(f, hd, bi) {
+    if (!(hd?.t === 'dish' && hd.d.k === 'bowl' && hd.d.soup && hd.d.men == null) || f.bk[bi]) return bi;
+    const clk = this.clk(), want = this._focusLine()?.[2] || 'futsu', [lo, hi] = HARD[want]?.t || [21, 27];
+    let best = -1, bs = Infinity;
+    f.bk.forEach((x, i) => { if (!x) return; const s = clk - x.t0, sc = s < lo ? lo - s + 3 : s > hi ? s - hi : -s * 0.01; if (sc < bs) { bs = sc; best = i; } });
+    return best >= 0 ? best : bi;
+  }
+  // ---------- 次にやること（ガイド） ----------
+  _fxOf(pred) { const p = this.pc; let best = null, bd = Infinity; for (const f of this.store.fixtures) { if (f.br || !FIXTURES[f.t] || !pred(f, FIXTURES[f.t])) continue; const d = dist(f.x, f.z, p.x, p.z); if (d < bd) { bd = d; best = f; } } return best; }
+  _focusOrder() { const os = (this.dyn?.o || []).filter((o) => o[5].some((l) => !l[3] && !l[4])); return os.find((o) => o[0] === this.selOrder) || os.sort((a, b) => b[2] - a[2])[0] || null; }
+  _focusLine() { const o = this._focusOrder(); return o ? o[5].find((x) => !x[3] && !x[4]) || null : null; }
+  _guide() {
+    const st = this.store, dyn = this.dyn, hd = this.hand(), clk = this.clk(), G = (text, f, extra) => ({ text, f: f || null, ...extra });
+    const RACK = (f, D) => D.rack, serve = (who, seat) => G(`🙇 ${who}のお客さんに提供しよう`, seat);
+    if (dyn?.f?.length) { const fire = this.fx(dyn.f[0][0]); if (hd?.t === 'ext') return G('🔥 火に向けて長押しで消火！', fire, { urgent: true }); return G('🔥 火事！消火器を取って消そう', this._fxOf((f) => f.t === 'ext') || fire, { urgent: true }); }
+    if (dyn?.th && !['down', 'run'].includes(dyn.th[5])) { if (hd?.t === 'shuri') return G('🥷 泥棒を画面のまん中に入れて手裏剣を投げよう', null, { urgent: true, pos: { x: dyn.th[0], y: 2.1, z: dyn.th[1] } }); const sh = this._fxOf((f) => f.t === 'shuriken'); if (sh) return G('🥷 泥棒！手裏剣ケースから手裏剣を取ろう', sh, { urgent: true }); }
+    if (hd?.t === 'ext' || hd?.t === 'shuri') return G('道具を使い終わったら「しまう」', null);
+    if (st.phase === 'prep') {
+      if (!st.fixtures.some((f) => FIXTURES[f.t].pot && f.pot)) return G('🍲 まず寸胴鍋でスープを炊こう', this._fxOf((f, D) => D.pot));
+      if (hd?.t === 'dish') return G('🍜 料理を持っています（受け渡し台に置けます）', this._fxOf((f, D) => D.pass));
+      return G('🏮 準備ができたら、入口の札で「営業中」にしよう', this._fxOf((f) => f.t === 'opensign'));
+    }
+    if (hd?.t === 'dirty') return G(hd.a.length >= DIRTY_MAX ? '🫧 洗い場に食器を置いて洗おう' : '🫧 食器を洗い場へ', this._fxOf((f, D) => D.sink));
+    const o = this._focusOrder();
+    if (!o) {
+      if (hd?.t === 'dish') return G('🍜 料理を持っています：受け渡し台に置くか、生ゴミ箱へ', this._fxOf((f, D) => D.pass));
+      const dirtySeat = st.fixtures.find((f) => (f.dd || []).some((a) => a?.length));
+      if (dirtySeat) return G('🍽️ 食べ終わった席の食器を下げよう', dirtySeat);
+      if (Object.values(st.dirty || {}).reduce((a, b) => a + b, 0) >= 3) return G('🫧 洗い場で食器を洗おう（長押し）', this._fxOf((f, D) => D.sink));
+      return null;
+    }
+    const seat = this.fx(o[6]), l = o[5].find((x) => !x[3] && !x[4]), who = o[1];
+    if (!l) return null;
+    const gr = (k) => this._fxOf((f, D) => D.griddle === k), S = SIDES[l[0]];
+    if (hd?.t === 'dish') {
+      const d = hd.d;
+      if (l[0] === 'ramen') {
+        const m = st.menu.find((x) => x.id === l[1]); if (!m) return null;
+        if (d.k !== 'bowl') return G('🗑️ この注文にはラーメン丼が必要です', this._fxOf((f) => f.t === 'trash'));
+        if (!d.soup) { const pot = this._fxOf((f, D) => D.pot && f.pot?.k === m.soup && potReady(f, clk)) || this._fxOf((f, D) => D.pot && f.pot?.k === m.soup); return pot ? G(`🥣 寸胴鍋で${SOUP_NAME(m.soup)}スープを注ごう`, pot) : G(`🍲 ${SOUP_NAME(m.soup)}スープがありません：寸胴鍋で炊こう`, this._fxOf((f, D) => D.pot && !f.pot) || this._fxOf((f, D) => D.pot)); }
+        if (d.soup !== m.soup) return G(`⚠️ スープがちがいます（注文は${SOUP_NAME(m.soup)}）`, this._fxOf((f) => f.t === 'trash'));
+        if (d.men == null) { const b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean)); if (b) { const s = Math.max(...b.bk.filter(Boolean).map((x) => clk - x.t0)), H = HARD[l[2]] || HARD.futsu; return G(s < H.t[0] ? `♨️ 麺が茹で上がるのを待とう（${H.name}まで あと${Math.ceil(H.t[0] - s)}秒）` : `♨️ 茹で麺機で湯切りしよう（${H.name}）`, b); } return G('🍜 茹で麺機に麺を入れよう', this._fxOf((f, D) => D.baskets)); }
+        const miss = m.tp.filter((x) => !(d.tp || []).includes(x));
+        if (miss.length) { const np = miss.filter((x) => !(st.prep[x] > 0)); if (np.length === miss.length) return G(`🔪 ${TOPPINGS[np[0]].name}の仕込みがありません：まな板で仕込もう`, this._fxOf((f, D) => D.board)); return G(`🥢 トッピング台で ${miss.map((x) => TOPPINGS[x].name).join('・')} をのせよう`, this._fxOf((f, D) => D.topping)); }
+        return serve(who, seat);
+      }
+      if (l[0] === 'beer') { if (d.k !== 'mug') return G('🍺 ジョッキが必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'beer' || (d.fill || 0) < 0.85) return G('🍺 ビールサーバーで注ごう（長押し・泡7:3で止める）', this._fxOf((f) => f.t === 'beer')); return serve(who, seat); }
+      if (l[0] === 'rice' || l[0] === 'chadon') { if (d.k !== 'bowlS') return G('🍚 小丼が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'rice') return G('🍚 炊飯器でごはんをよそおう', this._fxOf((f) => f.t === 'rice')); if (l[0] === 'chadon' && !(d.tp || []).includes('chashu')) return G('🥢 トッピング台でチャーシューをのせよう', this._fxOf((f, D) => D.topping)); return serve(who, seat); }
+      if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (d.k !== 'plate') return G('🍽️ 皿が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== l[0]) return G(g?.gr ? `🍽️ ${S.name}を皿に取ろう` : `🔥 先に${S.name}を作ろう`, g); return serve(who, seat); }
+      return null;
+    }
+    if (l[0] === 'ramen') {
+      const m = st.menu.find((x) => x.id === l[1]);
+      if (m && !st.fixtures.some((f) => FIXTURES[f.t].pot && f.pot?.k === m.soup && f.pot.sv > 0)) return G(`🍲 ${SOUP_NAME(m.soup)}スープを寸胴鍋で炊こう`, this._fxOf((f, D) => D.pot && !f.pot) || this._fxOf((f, D) => D.pot));
+      if (!st.fixtures.some((f) => FIXTURES[f.t].baskets && f.bk.some(Boolean))) return G('🍜 茹で麺機に麺を入れよう', this._fxOf((f, D) => D.baskets));
+      return G('🍜 食器棚でラーメン丼を取ろう', this._fxOf(RACK));
+    }
+    if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (g && !g.gr) return G(`🔥 ${FIXTURES[g.t].name}で${S.name}を作ろう`, g); return G('🍽️ 食器棚で皿を取ろう', this._fxOf(RACK)); }
+    if (l[0] === 'rice' || l[0] === 'chadon') { const rc = this._fxOf((f) => f.t === 'rice'); if (rc && !rc.rc) return G('🍚 炊飯器でごはんを炊こう', rc); return G('🍚 食器棚で小丼を取ろう', this._fxOf(RACK)); }
+    if (l[0] === 'beer') return G('🍺 食器棚でジョッキを取ろう', this._fxOf(RACK));
+    return null;
+  }
+  _updateGuide(dt) {
+    this._gT = (this._gT || 0) - dt;
+    if (this._gT <= 0) { this._gT = 0.25; this._guideNow = this.app.settings.guide === false ? null : this._guide(); }
+    const g = this._guideNow, cam = this.R.camera;
+    let pos = null;
+    if (g?.pos) pos = g.pos; else if (g?.f) { const def = FIXTURES[g.f.t]; pos = { x: g.f.x, y: (def.top || 1.0) + 0.75, z: g.f.z }; }
+    this.R.setGuide(pos, !!g?.urgent);
+    let edge = null;
+    if (pos) {
+      const v = new THREE.Vector3(pos.x, pos.y, pos.z).project(cam), behind = v.z > 1;
+      if (behind || Math.abs(v.x) > 0.92 || Math.abs(v.y) > 0.9) { let x = behind ? -v.x : v.x, y = behind ? -v.y : v.y; if (behind && Math.abs(x) < 0.05) x = 0.05; edge = Math.atan2(-y, x); }
+    }
+    const near = g?.f && dist(g.f.x, g.f.z, this.pc.x, this.pc.z) < 1.6;
+    this.ui.setGuide(g ? g.text : '', edge, !!g?.urgent, near);
+  }
+  cookTarget(f) { const d = FIXTURES[f.t]; return d.pot || d.baskets || d.topping || d.rice || d.griddle || d.beer || d.pass || d.rack || d.sink || f.t === 'trash'; }
+  _custNear() {
+    const p = this.pc; let best = null, bd = 2.3;
+    for (const o of this.dyn?.o || []) {
+      const c = (this.dyn.c || []).find((x) => x[0] === o[0]); if (!c) continue;
+      const d = dist(c[2], c[3], p.x, p.z), ang = Math.abs(angleLerp(0, Math.atan2(c[2] - p.x, c[3] - p.z) - p.yaw, 1));
+      if (d < bd && ang < 0.75) { bd = d; best = { type: 'cust', cid: o[0], fid: o[6], si: o[7], o, point: { x: c[2], y: 1, z: c[3] } }; }
+    }
+    if (best) { best.f = this.fx(best.fid); if (best.f) best.si ??= best.o[7]; }
+    return best;
+  }
+  fx(id) { return this.store.fixtures.find((f) => f.id === id); }
+  hand() { return this.store?.hand?.[this.me] || null; }
+  heldCrate() { return (this.store?.crates || []).find((c) => c.loc.t === 'h' && c.loc.who === this.me); }
+  orderAt(fid, si) { return (this.dyn?.o || []).find((o) => o[6] === fid && o[7] === si) || null; }
+  // 長押し：前回からの時間ぶん（最大0.35秒）
+  holdDur(k) { const now = performance.now() / 1000, last = this.hold[k] || 0; this.hold[k] = now; return now - last > 0.5 ? 0.13 : Math.min(0.35, now - last); }
+  // ---------- 行動 ----------
+  _actions(t) {
+    const st = this.store, clk = this.clk(), hd = this.hand();
+    const A = { act: null, alt: null, box: null, hint: '', info: '', slot: null };
+    if (t?.type === 'crate') {
+      const c = (st.crates || []).find((o) => o.id === t.cid);
+      if (c) {
+        const def = FIXTURES[c.ft];
+        A.info = `📦 <b>${def.icon} ${def.name}</b>の大きい段ボール`;
+        A.act = { label: '持つ', fn: () => { this.crateR = 0; this.act({ t: 'cratePick', cid: c.id }); } };
+        A.alt = { label: `返品 +${yen(def.price)}`, fn: async () => { this.setUIBlock(true); const ok = await confirmBox(`${def.icon} ${def.name}を返品しますか？（${yen(def.price)}もどります）`, '返品する'); this.setUIBlock(false); if (ok) this.act({ t: 'crateReturn', cid: c.id }); } };
+        A.hint = '持って、置きたい場所で「ここに置く」';
+        return A;
+      }
+    }
+    // 手に持っている物
+    if (hd?.t === 'ext') {
+      A.info = `🧯 <b>消火器</b> 残り ${Math.round(hd.u * 100)}%`;
+      A.act = { label: '🧯 消火（長押し）', repeat: true, fn: () => { const p = this.pc; this.act({ t: 'spray', x: p.x, z: p.z, a: p.yaw, dur: this.holdDur('spray') }); this.anim = 'spray'; } };
+      A.alt = { label: 'しまう', fn: () => this.act({ t: 'handBack' }) };
+      A.hint = this.dyn?.f?.length ? '🔥 火に向けて長押し！' : '火事のときに火に向けて長押しで消火';
+      return A;
+    }
+    if (hd?.t === 'shuri') {
+      A.info = `✴️ <b>手裏剣</b> 残り ${hd.n}枚`;
+      A.act = { label: '✴️ 投げる', fn: () => { const p = this.pc; if (performance.now() - (this._thr || 0) < 280) return; this._thr = performance.now(); this.act({ t: 'throw', x: p.x, z: p.z, a: p.yaw }); this.anim = 'throw'; this.animT = 0.35; } };
+      A.alt = { label: 'しまう', fn: () => this.act({ t: 'handBack' }) };
+      A.hint = this.dyn?.th && this.dyn.th[5] !== 'down' ? '🥷 泥棒を画面のまん中に入れて投げよう！（2回当てると撃退）' : 'お客さんに当てないように注意';
+      return A;
+    }
+    if (!t) {
+      if (hd?.t === 'dish') { A.info = dishText(hd.d); A.hint = '料理を持って、お客さんの席を狙うと「出す」'; }
+      if (hd?.t === 'dirty') { A.info = `🍽️ 下げた食器 ${hd.a.length}/${DIRTY_MAX}`; A.hint = '洗い場に持っていこう'; }
+      return A;
+    }
+    if (t.type === 'cust') return this._seatActions(t, t.f, t.si, hd, A);
+    const f = t.f, def = FIXTURES[f.t];
+    if (!def.fixed) A.box = { label: '動かす', icon: '🔧', fn: () => this.startMove(f) };
+    if (f.br) {
+      const cost = repairCost(f);
+      A.info = `💥 <b>${def.name}</b>（焼けて壊れています）`;
+      A.act = { label: `🔧 修理 ${yen(cost)}`, fn: () => this.act({ t: 'repair', fid: f.id }) };
+      A.hint = '修理するとまた使えるようになります';
+      return A;
+    }
+    const dishInfo = hd?.t === 'dish' ? dishText(hd.d) + '<br>' : hd?.t === 'dirty' ? `🍽️ 下げた食器 ${hd.a.length}/${DIRTY_MAX}<br>` : '';
+    // ---- 席 ----
+    if (def.seats) return this._seatActions(t, f, t.si, hd, A);
+    // ---- 寸胴鍋 ----
+    if (def.pot) {
+      const P = f.pot, ready = potReady(f, clk);
+      if (!P) A.info = `🍲 <b>${def.name}</b>：空っぽ`;
+      else {
+        const age = clk - P.t0, rich = clamp((age - SOUP_READY) / (SOUP_RICH - SOUP_READY), 0, 1);
+        A.info = `🍲 <b>${SOUP_NAME(P.k)}スープ</b> ${P.sv}/${def.pot.sv}杯 ${ready ? `・コク ${Math.round(rich * 100)}%・品質 ${Math.round(soupQuality(f, clk) * 100)}点` : `・炊いています… あと${Math.max(0, Math.ceil(SOUP_READY - age))}秒`}・${P.fire ? '🔥火' : '⚫火が止まっている（冷める）'}`;
+      }
+      A.info = dishInfo + A.info;
+      if (hd?.t === 'dish' && hd.d.k === 'bowl' && !hd.d.soup) {
+        if (ready) A.act = { label: 'スープを注ぐ', icon: '🥣', fn: () => this.act({ t: 'soupPour', fid: f.id }) };
+        else A.hint = P ? 'スープができるまで待とう' : 'スープを炊こう（手を空けてから）';
+      } else if (!hd) {
+        if (!P || P.sv <= 0) A.act = { label: 'スープを炊く', icon: '🍲', fn: () => this.ui.openSoupPicker(f.id) };
+        if (P) A.alt = { label: P.fire ? '火を止める' : '火をつける', fn: () => this.act({ t: 'fire', fid: f.id }) };
+        if (P && P.sv > 0) A.hint = P.sv <= 0 ? '' : '丼を持ってくるとスープを注げます（コクは長く炊くほど出る）';
+        if (P && P.sv <= 0 && P.fire) A.hint = '⚠ 空焚き！火を止めよう（火事になる）';
+        if (P && P.sv > 0) A.box = { label: 'スープを捨てる', icon: '🗑️', fn: async () => { this.setUIBlock(true); const ok = await confirmBox('寸胴鍋のスープを捨てますか？', '捨てる'); this.setUIBlock(false); if (ok) this.act({ t: 'soupDump', fid: f.id }); } };
+      }
+      return A;
+    }
+    // ---- 茹で麺機 ----
+    if (def.baskets) {
+      const bi = t.bi ?? 0, b = f.bk[bi];
+      const lines = f.bk.map((x, i) => { if (!x) return `<span class="bk off">${i + 1}:空</span>`; const s = clk - x.t0; const lab = noodleLabel(s); return `<span class="bk ${s > NOODLE_OVER ? 'over' : s >= HARD.katame.t[0] ? 'ok' : ''}${i === bi ? ' sel' : ''}">${i + 1}:${s.toFixed(0)}秒 ${lab}</span>`; }).join(' ');
+      A.info = dishInfo + `♨️ <b>茹で麺機</b>　${lines}<br><small>かため${HARD.katame.t[0]}〜${HARD.katame.t[1]}秒・ふつう〜${HARD.futsu.t[1]}秒・やわらかめ〜${HARD.yawa.t[1]}秒</small>`;
+      const [bx, bz] = basketPos(f.t, bi); A.slot = [f.id, { x: bx, y: 0.86, z: bz, w: 0.2, h: 0.12, d: 0.2 }];
+      if (hd?.t === 'dish' && hd.d.k === 'bowl') {
+        if (!hd.d.soup) A.hint = '先に寸胴鍋でスープを注ごう';
+        else if (hd.d.men == null) { if (b) A.act = { label: '湯切りして入れる', icon: '♨️', fn: () => this.act({ t: 'noodleOut', fid: f.id, bi }) }; else A.hint = 'そのてぼは空です（麺が入ったてぼを狙おう）'; }
+      }
+      const free = f.bk.some((x) => !x);
+      if (!b || (free && !A.act)) { const put = { label: '麺を入れる', icon: '🍜', fn: () => this.act({ t: 'noodleIn', fid: f.id, bi: b ? -1 : bi }) }; if (!A.act) A.act = put; else if (!b) A.alt = put; }
+      if (b && !hd) A.alt = { label: `${bi + 1}番の麺を捨てる`, fn: () => this.act({ t: 'noodleDump', fid: f.id, bi }) };
+      if (!A.hint) A.hint = `生麺 ${st.stock.men || 0}玉。てぼに麺を入れて、丼にスープを注いでから湯切り`;
+      return A;
+    }
+    // ---- トッピング台 ----
+    if (def.topping) {
+      const list = Object.entries(TOPPINGS).filter(([, x]) => st.level >= x.lv).map(([k, x]) => `${x.icon}${st.prep[k] || 0}`).join(' ');
+      A.info = dishInfo + `🥢 <b>トッピング台</b>（仕込み済み）<br>${list}`;
+      const ok = hd?.t === 'dish' && ((hd.d.k === 'bowl' && hd.d.soup) || (hd.d.k === 'bowlS' && hd.d.side === 'rice'));
+      if (ok) {
+        A.act = { label: 'トッピング', icon: '🥢', fn: () => this.ui.openToppingPicker(f.id) };
+        const target = this.targetRecipe(hd.d);
+        if (target?.miss?.length) A.alt = { label: `注文どおり（${target.name}）`, fn: () => { for (const tid of target.miss) this.act({ t: 'top', fid: f.id, tid }); } };
+        A.hint = target ? `「${target.name}」には ${target.tp.map((x) => TOPPINGS[x]?.icon + TOPPINGS[x]?.name).join('・')}` : '';
+      } else A.hint = hd ? 'スープを入れた丼（またはライス）を持ってこよう' : 'トッピングはまな板で仕込むと増える';
+      return A;
+    }
+    // ---- まな板 ----
+    if (def.board) {
+      const J = f.job;
+      A.info = dishInfo + (J ? `🔪 <b>${TOPPINGS[J.tid].icon}${TOPPINGS[J.tid].name}</b>を仕込み中 ${Math.round(J.p * 100)}%` : `🔪 <b>まな板</b>：冷蔵庫の食材を切ってトッピングを仕込む`);
+      if (hd) { A.hint = '手を空けてから仕込もう'; return A; }
+      if (J) { A.act = { label: '🔪 切る（長押し）', repeat: true, fn: () => { this.act({ t: 'chop', fid: f.id, dur: this.holdDur('chop') }); this.anim = 'chop'; this.animT = 0.3; } }; A.alt = { label: 'やめる', fn: () => this.act({ t: 'chopCancel', fid: f.id }) }; }
+      else A.act = { label: '仕込む', icon: '🔪', fn: () => this.ui.openPrepPicker(f.id) };
+      A.hint = J ? '長押しで切る' : 'トッピングを選んで、長押しで切ろう';
+      return A;
+    }
+    // ---- 食器棚 ----
+    if (def.rack) {
+      A.info = dishInfo + `🍽️ <b>食器棚</b>：${Object.entries(DISHES).filter(([k]) => (st.dish[k] || 0) > 0 || k === 'bowl').map(([k, d]) => `${d.icon}${d.name} ${st.dish[k] || 0}`).join('・')}`;
+      if (!hd) {
+        A.act = { label: '丼を取る', icon: '🍜', fn: () => this.act({ t: 'take', fid: f.id, k: 'bowl' }) };
+        A.alt = { label: 'ほかの器', fn: () => this.ui.openDishPicker(f.id) };
+      } else if (hd.t === 'dish' && !hd.d.soup && !hd.d.side) A.act = { label: '器を戻す', fn: () => this.act({ t: 'handBack' }) };
+      return A;
+    }
+    // ---- 洗い場 ----
+    if (def.sink) {
+      const dirty = Object.values(st.dirty).reduce((a, b) => a + b, 0);
+      A.info = `🚰 <b>洗い場</b>：洗い物 ${dirty}個${f.wp ? `（${Math.round(f.wp * 100)}%）` : ''}`;
+      if (hd?.t === 'dirty') A.act = { label: '洗い場に置く', icon: '🧽', fn: () => this.act({ t: 'dirtyPut', fid: f.id }) };
+      else if (!hd && dirty > 0) A.act = { label: '🧽 洗う（長押し）', repeat: true, fn: () => { this.act({ t: 'wash', fid: f.id, dur: this.holdDur('wash') }); this.anim = 'wash'; this.animT = 0.3; } };
+      else A.hint = dirty ? '' : '洗い物はありません';
+      return A;
+    }
+    // ---- 冷蔵庫 ----
+    if (def.cap) {
+      A.info = dishInfo + `🧊 <b>${def.name}</b>：${fridgeUsed(st)}/${fridgeCap(st)}パック`;
+      A.act = { label: '在庫を見る', icon: '📋', fn: () => this.ui.openStock() };
+      A.hint = '食材はパソコンで仕入れると、ドローンでここに届きます';
+      return A;
+    }
+    // ---- 炊飯器 ----
+    if (def.rice) {
+      const rc = f.rc, ready = rc && clk - rc.t0 >= RICE_READY;
+      A.info = dishInfo + `🍚 <b>炊飯器</b>：${!rc ? '空っぽ' : ready ? `炊けています ${rc.sv}杯` : `炊いています… あと${Math.ceil(RICE_READY - (clk - rc.t0))}秒`}`;
+      if (hd?.t === 'dish' && hd.d.k === 'bowlS' && !hd.d.side && ready) A.act = { label: 'ライスをよそう', icon: '🍚', fn: () => this.act({ t: 'riceServe', fid: f.id }) };
+      else if (!hd && !rc) A.act = { label: `米を炊く（米 ${st.stock.kome || 0}袋）`, fn: () => this.act({ t: 'riceStart', fid: f.id }) };
+      else if (!hd && ready) A.hint = '小丼を持ってくるとよそえます';
+      return A;
+    }
+    // ---- 餃子焼き器・フライヤー ----
+    if (def.griddle) {
+      const G = GRIDDLE[def.griddle], gr = f.gr, sec = gr ? clk - gr.t0 : 0;
+      const stage = !gr ? '空' : sec < G.ideal[0] ? `焼いています ${sec.toFixed(0)}秒` : sec <= G.ideal[1] ? `<b style="color:#4ade80">ちょうどいい！ ${sec.toFixed(0)}秒</b>` : sec <= G.burn ? `<b style="color:#fbbf24">焼きすぎ ${sec.toFixed(0)}秒</b>` : `<b style="color:#ff6b81">焦げてる！ ${sec.toFixed(0)}秒</b>`;
+      A.info = dishInfo + `${SIDES[def.griddle].icon} <b>${def.name}</b>：${stage}<br><small>ちょうどいいのは ${G.ideal[0]}〜${G.ideal[1]}秒</small>`;
+      if (gr && hd?.t === 'dish' && hd.d.k === 'plate' && !hd.d.side) A.act = { label: '皿に盛る', icon: '🍽️', fn: () => this.act({ t: 'grillTake', fid: f.id }) };
+      else if (!gr && !hd) A.act = { label: `${G.name}を${def.griddle === 'gyoza' ? '焼く' : '揚げる'}`, fn: () => this.act({ t: 'grillStart', fid: f.id }) };
+      else if (gr) A.hint = '空の皿を持ってきて盛ろう（食器棚の「ほかの器」）';
+      return A;
+    }
+    // ---- ビールサーバー ----
+    if (def.beer) {
+      A.info = dishInfo + `🍺 <b>ビールサーバー</b>：のこり ${st.prep.beer || 0}杯＋樽 ${st.stock.taru || 0}`;
+      if (hd?.t === 'dish' && hd.d.k === 'mug') { A.act = { label: '🍺 注ぐ（長押し）', repeat: true, fn: () => this.act({ t: 'pour', fid: f.id, dur: this.holdDur('pour') }) }; A.hint = '泡が7:3くらい（93%）で止めるとおいしい。あふれさせないで！'; }
+      else A.hint = 'ジョッキを持ってこよう（食器棚の「ほかの器」）';
+      return A;
+    }
+    // ---- 受け渡し台 ----
+    if (def.pass) {
+      const pi = t.pi ?? 0, d = f.ps[pi];
+      A.info = dishInfo + `🛎️ <b>受け渡し台</b>：${f.ps.map((x, i) => (x ? `${i + 1}:${dishText(x)}` : `${i + 1}:空`)).join('<br>')}`;
+      if (hd?.t === 'dish') A.act = { label: '受け渡し台に置く', fn: () => this.act({ t: 'passPut', fid: f.id, pi }) };
+      else if (!hd && (d || f.ps.some(Boolean))) A.act = { label: '料理を取る', fn: () => this.act({ t: 'passTake', fid: f.id, pi: d ? pi : -1 }) };
+      A.hint = '置いた料理は接客のアルバイトが運んでくれます';
+      return A;
+    }
+    if (f.t === 'trash') {
+      A.info = dishInfo + '🗑️ <b>生ゴミ箱</b>';
+      if (hd?.t === 'dish') A.act = { label: '捨てる', fn: () => this.act({ t: 'trash' }) };
+      return A;
+    }
+    if (f.t === 'ext' || f.t === 'shuriken') {
+      A.info = f.t === 'ext' ? '🧯 <b>消火器</b>' : '✴️ <b>手裏剣ケース</b>';
+      if (!hd) A.act = { label: f.t === 'ext' ? '消火器を持つ' : '手裏剣を持つ', fn: () => this.act({ t: 'takeTool', fid: f.id }) };
+      else A.hint = '手に持っている物を置いてから';
+      return A;
+    }
+    if (f.t === 'ticket') {
+      A.info = `🎫 <b>券売機</b>：レジの中 <b>${yen(st.till)}</b>`;
+      if (st.till > 0) A.act = { label: 'お金を回収', icon: '💴', fn: () => this.act({ t: 'collect', fid: f.id }) };
+      A.hint = st.till > 3000 ? '⚠ お金がたまると泥棒に狙われます。回収しよう' : 'お客さんはここで食券を買います';
+      return A;
+    }
+    if (f.t === 'pc') { A.act = { label: 'パソコンを使う', icon: '💻', fn: () => this.ui.openPC('order') }; A.info = '💻 パソコン：仕入れ・メニュー・アルバイト・評判・お店・拡張'; return A; }
+    if (f.t === 'opensign') return Object.assign(A, this._signAction(st));
+    if (def.gamble) {
+      const G = GAMBLES[def.gamble], ok = st.level >= G.lv;
+      A.info = `${G.icon} <b>${G.name}</b>${ok ? '' : `（🔒 お店 Lv.${G.lv} から）`}`;
+      if (ok) A.act = { label: '遊ぶ', icon: G.icon, fn: () => this.ui.openGamble(def.gamble, f.id) };
+      A.hint = G.desc;
+      return A;
+    }
+    if (def.text) { A.act = { label: '文字を編集', fn: () => this.ui.openText(f.id) }; A.info = `${def.icon} ${def.name}`; return A; }
+    if (def.turret) { A.info = '🛡️ <b>警備タレット</b>：近づいた泥棒に自動で手裏剣を撃つ'; return A; }
+    A.info = `${def.icon} ${def.name}`;
+    return A;
+  }
+  // 席：料理を出す・食器を下げる
+  _seatActions(t, f, si, hd, A) {
+    const st = this.store;
+    if (!f || si == null || si < 0) return A;
+    const def = FIXTURES[f.t], o = this.orderAt(f.id, si), dd = f.dd?.[si] || [];
+    if (!t.type || t.type !== 'cust') { const [sx, sz] = def.spots[si]; A.slot = [f.id, { x: sx, y: def.top - 0.02, z: sz, w: 0.32, h: 0.14, d: 0.3 }]; }
+    let info = hd?.t === 'dish' ? dishText(hd.d) + '<br>' : hd?.t === 'dirty' ? `🍽️ 下げた食器 ${hd.a.length}/${DIRTY_MAX}<br>` : '';
+    if (o) {
+      const wait = o[2], lines = o[5].map((l) => `${l[3] ? '✅' : l[4] ? '⏳' : '⬜'} ${lineName(st, l)}${l[0] === 'ramen' ? `（${HARD[l[2]]?.name}）` : ''}`).join('　');
+      info += `${o[4] ? '🕶️ <b>評論家</b>' : '🧑 お客さん'}［${o[1]}］ 待ち ${wait}秒<br>${lines}`;
+    } else info += `${def.icon} ${def.name}${dd.length ? `　🍽️ 食べ終わった食器 ${dd.length}` : '（空き）'}`;
+    A.info = info;
+    if (hd?.t === 'dish' && o) {
+      A.act = { label: '提供する', icon: '🙇', fn: () => this.act({ t: 'serve', cid: o[0], fid: f.id, si }) };
+      const m = o[5].find((l) => !l[3] && l[0] === 'ramen'); if (m) { const menu = st.menu.find((x) => x.id === m[1]); if (menu) A.hint = `注文：${menu.name}（${SOUP_NAME(menu.soup)}・${menu.tp.map((x) => TOPPINGS[x]?.icon).join('')}・麺${HARD[m[2]]?.name}）`; }
+    }
+    if (dd.length && (!hd || (hd.t === 'dirty' && hd.a.length < DIRTY_MAX))) A[A.act ? 'alt' : 'act'] = { label: `食器を下げる（${dd.length}）`, icon: '🍽️', fn: () => this.act({ t: 'clear', fid: f.id, si }) };
+    if (!A.hint && hd?.t === 'dirty') A.hint = hd.a.length >= DIRTY_MAX ? '洗い場に持っていこう' : '';
+    return A;
+  }
+  // 持っている丼に合う注文（選んだ注文 → 同じスープでいちばん待っている注文）
+  targetRecipe(d) {
+    const st = this.store;
+    const orders = (this.dyn?.o || []).slice();
+    const sel = orders.find((o) => o[0] === this.selOrder);
+    const want = (o) => o[5].filter((l) => !l[3]).map((l) => {
+      if (l[0] === 'ramen') { const m = st.menu.find((x) => x.id === l[1]); return m && d.k === 'bowl' && m.soup === d.soup ? { name: m.name, tp: m.tp } : null; }
+      if (l[0] === 'chadon' && d.k === 'bowlS') return { name: 'チャーシュー丼', tp: ['chashu'] };
+      return null;
+    }).filter(Boolean)[0];
+    let w = sel ? want(sel) : null;
+    if (!w) for (const o of orders.sort((a, b) => b[2] - a[2])) { w = want(o); if (w) break; }
+    if (!w) return null;
+    return { ...w, miss: w.tp.filter((x) => !(d.tp || []).includes(x) && (st.prep[x] || 0) > 0) };
+  }
+  _signAction(st) {
+    if (st.phase === 'prep') return { act: { label: '「営業中」にする', fn: () => this.act({ t: 'open' }) }, info: '🪧 札：<b style="color:#ff6b81">準備中</b>', hint: '営業中にするとのれんが出て、お客さんが来ます' };
+    if (st.phase === 'open') return { act: { label: '「準備中」にする', fn: () => this.act({ t: 'open' }) }, info: '🪧 札：<b style="color:#4ade80">営業中</b>', hint: '準備中にすると新しいお客さんが来なくなり、店じまいします' };
+    return { act: null, info: '🪧 札：<b style="color:#ff6b81">準備中</b>', hint: st.phase === 'closing' ? '店じまい中…残りのお客さんが食べ終わるのを待とう' : '' };
+  }
+  dropPoint() { const p = this.pc; return { x: p.x + Math.sin(p.ry) * 0.75, z: p.z + Math.cos(p.ry) * 0.75, ry: p.ry }; }
+  _placeAim(type, r, ignoreId) {
+    const cam = this.R.camera, p = this.pc;
+    V2.set(0, 0); RAY.setFromCamera(V2, cam);
+    const o = RAY.ray.origin, d = RAY.ray.direction;
+    let x, z;
+    if (d.y < -0.05) { const k = -o.y / d.y; x = o.x + d.x * k; z = o.z + d.z * k; } else { x = p.x + Math.sin(p.yaw) * 3; z = p.z + Math.cos(p.yaw) * 3; }
+    const dd = dist(x, z, p.x, p.z); if (dd > 7) { x = p.x + (x - p.x) / dd * 7; z = p.z + (z - p.z) / dd * 7; }
+    [x, z] = snapFixture(type, x, z, r);
+    const overMe = (xx, zz) => { if (FIXTURES[type]?.air) return false; const f = fixtureFootprint(type, xx, zz, r); return p.x > f.minX - 0.3 && p.x < f.maxX + 0.3 && p.z > f.minZ - 0.3 && p.z < f.maxZ + 0.3; };
+    for (let k = 1; k <= 16 && overMe(x, z); k++) [x, z] = snapFixture(type, x + Math.sin(p.yaw) * 0.25, z + Math.cos(p.yaw) * 0.25, r);
+    return fitPlacement(this.store, type, x, z, r, ignoreId, overMe);
+  }
+  _crateActions(c, inp) {
+    const def = FIXTURES[c.ft];
+    if (inp.edges.has('rotate')) this.crateR = ((this.crateR || 0) + 1) % 4;
+    const r = this.crateR || 0, P = this._placeAim(c.ft, r, null);
+    this.R.setGhost(c.ft, P.x, P.z, r, P.ok, this.store); this._crateGhost = true;
+    return {
+      info: `📦 <b>${def.icon} ${def.name}</b>の大きい段ボール`,
+      hint: P.ok ? '置きたい場所を狙って「ここに置く」（「回す」で向きを変える）' : '⚠ ' + P.why,
+      act: { label: 'ここに置く', fn: () => { if (!P.ok) { toast(P.why, 'warn'); this.app.sfx.play('err'); return; } this.act({ t: 'unpack', x: P.x, z: P.z, r }); } },
+      alt: { label: '回す', fn: () => { this.crateR = (r + 1) % 4; } },
+      box: { label: '下ろす', icon: '📦', fn: () => this.act({ t: 'crateDrop', ...this.dropPoint() }) },
+      slot: null,
+    };
+  }
+  _interact(dt, inp) {
+    const crate = this.heldCrate();
+    const t = crate ? null : this._target();
+    if (!crate && this._crateGhost) { this._crateGhost = false; this.R.setGhost(null); }
+    const A = crate ? this._crateActions(crate, inp) : this._actions(t);
+    const hlId = A.slot ? A.slot[0] : t?.type === 'fixture' ? t.fid : t?.type === 'cust' ? t.fid : null;
+    this.R.setHighlight(hlId, A.slot ? (() => { const s = A.slot[1]; return [s.x, s.y, s.z, s.w, s.h ?? 0.35, s.d]; })() : null);
+    this.input.setLabel('act', A.act?.label || '', !!A.act);
+    this.input.setLabel('alt', A.alt?.label || '', !!A.alt);
+    this.input.setLabel('box', A.box?.label || '', !!A.box, A.box?.icon || '📦'); this.input.setVisible('box', !!A.box);
+    this.ui.setHint(A.hint, A.info);
+    this._updateGuide(dt);
+    this.ui.setHand(this.hand());
+    if (!crate && inp.taps?.length && this.app.settings.assist !== false) this._tapAct(inp.taps[inp.taps.length - 1]);
+    const k = this.input.touchVisible ? '' : `${A.act ? 'E/左クリック：' + A.act.label + '　' : ''}${A.alt ? 'Q/右クリック：' + A.alt.label + '　' : ''}${A.box ? 'F：' + A.box.label + '　' : ''}B：建築　C：注文票　V：視点　Tab：評判　Esc：メニュー${this.room ? '　Enter：チャット' : ''}`;
+    this.ui.setKeys(k);
+    this.ui.showCross(true);
+    this.timers.repeat -= dt;
+    for (const id of ['act', 'alt', 'box']) {
+      const a = A[id]; if (!a) continue;
+      if (inp.edges.has(id)) { a.fn(); this.timers.repeat = 0.3; this.pc.ry = this.app.settings.cam === 'first' ? this.pc.ry : this.pc.yaw; this.reachT = 0.4; }
+      else if (a.repeat && inp.held.has(id) && this.timers.repeat <= 0) { a.fn(); this.timers.repeat = 0.13; this.reachT = 0.3; }
+    }
+    this.reachT = Math.max(0, (this.reachT || 0) - dt);
+    this.animT = Math.max(0, (this.animT || 0) - dt); if (!this.animT && !(inp.held.has('act') && this.hand()?.t === 'ext')) this.anim = null;
+    // ゲージ（消火器・仕込み・ビール・洗い物）
+    const hd = this.hand(), f = t?.f;
+    let g = null;
+    if (hd?.t === 'ext') g = [hd.u, '🧯'];
+    else if (hd?.t === 'dish' && hd.d.k === 'mug' && hd.d.side === 'beer') g = [Math.min(1, (hd.d.fill || 0) / 1.1), '🍺', hd.d.fill > 1.08 ? 'あふれた！' : Math.abs(hd.d.fill - 0.93) < 0.06 ? 'ちょうどいい！' : ''];
+    else if (f && FIXTURES[f.t].board && f.job) g = [f.job.p, '🔪'];
+    else if (f && FIXTURES[f.t].sink && f.wp) g = [f.wp, '🧽'];
+    this.ui.setGauge(g);
+  }
+
+  // ---------- 建築 ----------
+  toggleBuild(on, move = null) {
+    if (on && (this.hand() || this.heldCrate())) { toast('手に持っている物を置いてから建築モードにしてね', 'warn'); return; }
+    this.state = on ? 'build' : 'walk';
+    this.build = { sel: null, moving: null, r: 0, x: 0, z: 0, ok: false };
+    this.R.setGhost(null); this.R.setFixtureHidden(null);
+    if (on && move) { this.build.moving = move; this.build.r = move.r; this.build.quick = true; this.R.setFixtureHidden(move.id); }
+    this.ui.showBuild(on, move ? move.t : null, (id) => this.pickBuild(id), move ? { type: move.t, ok: false, why: '' } : null);
+    this.ui.setHint('', '');
+    this.ui.setGauge(null);
+  }
+  startMove(f) {
+    if (this.hand()) { toast('手に持っている物を置いてから動かしてね', 'warn'); return; }
+    this.toggleBuild(true, f);
+    if (this.state === 'build') toast(`${FIXTURES[f.t].icon} ${FIXTURES[f.t].name}を動かしています。置きたい場所を狙って「ここに移動」`, '', 3000);
+  }
+  pickBuild(id) { this.build.sel = id; this.build.moving = null; this.R.setGhost(null); this.R.setFixtureHidden(null); this.ui.showBuild(true, id, (x) => this.pickBuild(x)); }
+  _updateBuild(dt, inp) {
+    const B = this.build;
+    if (B.sel && !B.moving) {
+      const def = FIXTURES[B.sel];
+      this.R.setGhost(null); this.R.setHighlight(null);
+      this.ui.showBuild(true, B.sel, (xx) => this.pickBuild(xx));
+      this.input.setLabel('act', `買う ${yen(def.price)}`, this.store.money >= def.price);
+      this.input.setLabel('alt', '', false);
+      this.input.setLabel('box', '選択解除', true, '✖'); this.input.setVisible('box', true);
+      this.ui.setHint(this.store.money >= def.price ? '買うと店の前に大きい段ボールで届きます。持って、置きたい場所で「ここに置く」' : '⚠ お金が足りません', `${def.icon} ${def.name}　${yen(def.price)}<br><small>${def.desc || ''}</small>`);
+      this.ui.setKeys(this.input.touchVisible ? '' : 'E：買う　F：選択解除　B/Esc：終了');
+      if (inp.edges.has('box')) { this.pickBuild(null); return; }
+      if (inp.edges.has('act')) { if (this.store.money < def.price) { toast('お金が足りません', 'warn'); this.app.sfx.play('err'); } else { this.act({ t: 'buy', ft: B.sel }); this.pickBuild(null); } }
+      return;
+    }
+    const type = B.moving?.t;
+    if (!type) this.ui.showBuild(true, null, (x) => this.pickBuild(x));
+    if (inp.edges.has('rotate')) B.r = (B.r + 1) % 4;
+    if (type) {
+      const P = this._placeAim(type, B.r, B.moving?.id ?? null), x = P.x, z = P.z;
+      B.x = x; B.z = z; B.ok = P.ok; B.why = P.why;
+      this.ui.showBuild(true, type, (xx) => this.pickBuild(xx), { type, ok: B.ok, why: B.why });
+      this.R.setGhost(type, x, z, B.r, B.ok, this.store);
+      this.input.setLabel('act', 'ここに移動', B.ok); this.input.setLabel('alt', '回転', true);
+      this.input.setLabel('box', 'やめる', true, '✖'); this.input.setVisible('box', true);
+      if (inp.edges.has('box')) { if (B.quick) this.toggleBuild(false); else this.pickBuild(null); return; }
+      this.ui.setHint(B.ok ? '' : '⚠ ' + B.why, `${FIXTURES[type].icon} ${FIXTURES[type].name}（移動中）`);
+      this.ui.setKeys(this.input.touchVisible ? '' : 'E：移動　Q/R：回転　F：やめる　B/Esc：終了');
+      if (inp.edges.has('alt')) B.r = (B.r + 1) % 4;
+      if (inp.edges.has('act')) {
+        if (!B.ok) { toast(B.why, 'warn'); this.app.sfx.play('err'); }
+        else { this.act({ t: 'move', fid: B.moving.id, x, z, r: B.r }); B.moving = null; this.R.setGhost(null); this.R.setFixtureHidden(null); if (B.quick) { this.toggleBuild(false); return; } }
+      }
+      this.R.setHighlight(null);
+      return;
+    }
+    const t = this._target(), f = t?.type === 'fixture' ? t.f : null, def = f && FIXTURES[f.t];
+    this.R.setHighlight(f && !def.fixed ? f.id : null);
+    this.input.setVisible('box', false);
+    this.input.setLabel('act', f && !def.fixed ? '移動' : '', !!f && !def.fixed);
+    this.input.setLabel('alt', f && !def.fixed ? `売却 +${yen(def.price / 2)}` : '', !!f && !def.fixed);
+    this.ui.setHint(f ? (def.fixed ? 'これは動かせません' : '') : '置きたい設備をリストから選ぶか、動かしたい設備を狙ってね', f ? `${def.icon} ${def.name}` : '');
+    this.ui.setKeys(this.input.touchVisible ? '' : 'E：移動　Q：売却　B/Esc：終了');
+    if (f && !def.fixed) {
+      if (inp.edges.has('act')) { B.moving = f; B.r = f.r; this.R.setFixtureHidden(f.id); }
+      if (inp.edges.has('alt')) this.act({ t: 'sell', fid: f.id });
+    }
+  }
+  // ---------- ネット送受信 ----------
+  _net(dt) {
+    if (!this.room) return;
+    const T = this.timers, p = this.pc;
+    T.net -= dt;
+    if (T.net <= 0) {
+      T.net = 0.1;
+      const an = this.anim || (this.reachT > 0 ? 'reach' : this.moving ? 'walk' : 'idle');
+      const s = { x: +p.x.toFixed(2), z: +p.z.toFixed(2), y: +p.y.toFixed(2), ry: +p.ry.toFixed(2), an };
+      const k = JSON.stringify(s);
+      if (k !== this._lastPl || (T.plForce = (T.plForce || 0) + 1) > 20) { this._lastPl = k; T.plForce = 0; this.room.sendPlayer(s); }
+    }
+    if (this.mode !== 'host') return;
+    T.store -= dt; T.dyn -= dt;
+    if (T.store <= 0) {
+      T.store = 0.35;
+      const st = this.store, core = { ...st }; delete core.fixtures; delete core.time; delete core.rev;
+      const parts = { core: JSON.stringify(core), fx: JSON.stringify(st.fixtures) };
+      for (const [k, v] of Object.entries(parts)) if (v !== this.lastParts[k]) { this.lastParts[k] = v; this.room.publishStorePart(k, v); }
+    }
+    if (T.dyn <= 0) { T.dyn = 0.16; this.room.publishDyn(JSON.stringify(this.dyn)); }
+  }
+  // ---------- 描画 ----------
+  _render(dt) {
+    const R = this.R, st = this.store, d = this.dyn || { c: [], s: [] }, s = this.app.settings, p = this.pc;
+    R.setTime(st.time);
+    R.syncStore(st);
+    const hands = st.hand || {}, list = [];
+    const myAn = this.anim || (this.reachT > 0 ? 'reach' : null);
+    const fp = s.cam === 'first';
+    list.push({ key: 'me', kind: 'player', av: this.app.profile.av, x: p.x, y: p.y, z: p.z, ry: p.ry, local: true, an: myAn, hand: fp ? null : hands[this.me] || null,
+      name: s.names && this.room ? this.app.profile.name : null, nameColor: '#ffe14d', visible: !fp, bubble: this.chat[this.me] ? 'chat' : null, bubbleText: this.chat[this.me]?.text });
+    for (const [uid, pl] of Object.entries(this.players)) {
+      if (pl.x == null) continue;
+      list.push({ key: 'p:' + uid, kind: 'player', av: pl.av, x: pl.x, y: pl.y || 0, z: pl.z, ry: pl.ry || 0, an: pl.an === 'walk' ? null : pl.an, hand: hands[uid] || null, name: s.names ? pl.n : null, bubble: this.chat[uid] ? 'chat' : null, bubbleText: this.chat[uid]?.text });
+    }
+    for (const c of d.c || []) list.push({ key: 'c:' + c[0] + (c[1] === 'critic' ? 'k' : ''), kind: 'cust', av: c[1] === 'critic' ? CRITIC_AV : c[1], seedAv: c[1] !== 'critic', x: c[2], z: c[3], ry: c[4], an: c[5], bubble: c[6] || null, y: c[7] || 0, small: true });
+    const staffById = Object.fromEntries(st.staff.map((x) => [x.id, x]));
+    for (const e of d.s || []) {
+      const sd = staffById[e[0]]; if (!sd) continue;
+      list.push({ key: 's:' + e[0] + ':' + sd.seed, kind: 'staff', av: sd.seed, seedAv: true, uniform: st.color, x: e[1], z: e[2], ry: e[3], an: e[4], hand: hands['s:' + e[0]] || null, name: s.names ? (STAFF_ROLES[sd.role]?.icon || '') + sd.name : null, nameColor: '#9fe8ff', small: true, bubble: e[5] || null });
+    }
+    if (d.th) list.push({ key: 'thief:' + d.th[6], kind: 'thief', av: THIEF_AV, x: d.th[0], z: d.th[1], ry: d.th[2], an: d.th[3], bubble: d.th[4] || null, small: true });
+    // 賭場の壺振りと胴元
+    list.push({ key: 'npc:dealer', kind: 'npc', av: DEALER_AV, x: 13, z: -0.75, ry: 0, an: d.ch?.ph === 'roll' ? 'stir' : 'sit', y: 0.05, small: true });
+    if (st.level >= GAMBLES.chinchiro.lv) list.push({ key: 'npc:oya', kind: 'npc', av: { ...DEALER_AV, hat: 'none', acc: 'sun' }, x: 10.6, z: -2.65, ry: 0, an: 'sit', y: 0.05, small: true });
+    for (const e of list) if (e.seedAv) e.av = this.app.avatarFromSeed(e.av, e.kind);
+    for (const k of Object.keys(this.chat)) { this.chat[k].t -= dt; if (this.chat[k].t <= 0) delete this.chat[k]; }
+    R.syncChars(list, dt);
+    const holders = (who) => R.getChar(who === this.me ? 'me' : 'p:' + who);
+    const fpH = fp ? { who: this.me, av: this.app.profile.av, bob: this.fpBob || 0, hand: hands[this.me] || null } : null;
+    R.syncHands(list, fpH);
+    R.syncCrates(st, holders, fpH);
+    const clk = this.clk();
+    R.syncProps(st, d, clk);
+    R.syncFx(st, d);
+    R.syncBlobs(st, list.filter((e) => e.visible !== false && e.kind !== 'npc').map((e) => { const c = R.getChar(e.key); return c ? [c.root.position.x, c.root.position.z] : [e.x, e.z]; }));
+    R.world.update(dt, st.time, [[p.x, p.z], ...(d.c || []).map((c) => [c[2], c[3]]), ...Object.values(this.players).map((pl) => [pl.x, pl.z]), ...(d.th ? [[d.th[0], d.th[1]]] : [])]);
+    R.update(dt);
+  }
+  help(first) {
+    const m = document.createElement('div');
+    const steps = [
+      ['🏮', '外の札を「営業中」にすると、のれんが出てお客さんが来ます。お客さんは入口の券売機で食券を買って、空いている席に座ります'],
+      ['📋', '注文は画面の左の「注文票」に出ます（Cキー／📋ボタンで開け閉め）。タップすると、その注文を選べます'],
+      ['👉', '画面の上の「次」に、いまやることが出ます。黄色い矢印の設備へ行こう（画面の外なら、はしの矢印が向きを教えてくれます）。注文票をタップすると、その注文の手順に切りかわります'],
+      ['🎯', '設備をまん中で狙わなくても、目の前の近くの設備が自動で選ばれます（狙いアシスト）。スマホは画面の設備を直接タップしても使えます。設定でオフにできます'],
+      ['🍜', 'ラーメンの作り方：①茹で麺機に「麺を入れる」→ ②食器棚で「丼を取る」→ ③寸胴鍋で「スープを注ぐ」→ ④茹で麺機で「湯切りして入れる」→ ⑤トッピング台でのせる → ⑥お客さんの席で「提供する」'],
+      ['⏱️', '麺は茹でた秒数でかたさが決まる（かため15〜21秒・ふつう21〜27秒・やわらかめ27〜33秒）。お客さんの好みに合わせよう。42秒をこえると「のびた」'],
+      ['🍲', 'スープは寸胴鍋で炊く。材料を入れて30秒で使えるようになり、長く炊くほどコクが出る。火を止めると冷めて味が落ちる。空になったら火を止めないと空焚きで火事に！'],
+      ['🔪', 'トッピングはまな板で仕込む（長押しで切る）。食材はパソコンで仕入れると、ドローンが勝手口に飛んできて冷蔵庫に直接入れてくれます（倉庫はありません）'],
+      ['🍽️', 'お客さんが帰ったら席の食器を下げて（5個まで重ねて持てる）、洗い場で洗う（長押し）。きれいな器は食器棚にもどる'],
+      ['🥟', 'レベルが上がると、ライス・餃子・生ビール・チャーシュー丼・唐揚げなどのサイドメニュー、新しいスープとトッピングが使えるようになります。パソコンの「メニュー」でオリジナルラーメンを作ろう'],
+      ['🥷', '泥棒は券売機（レジ）のお金を狙ってくる。手裏剣ケースで手裏剣を持って、画面のまん中に入れて投げよう（2回当てると撃退して懸賞金）。お金はこまめに「回収」すると安心'],
+      ['🔥', '焦がした餃子・唐揚げや空焚きの鍋から火が出ることがある。消火器を持って火に向けて長押し！放っておくと設備が壊れて、お客さんも逃げてしまう'],
+      ['🕶️', 'ときどきサングラスのラーメン評論家が来る。80点以上の一杯を出すと評判が大きく上がって賞金も！'],
+      ['🎲', 'となりの「賭場」では丁半博打（Lv.8 チンチロリン・Lv.12 スロット）で、お店の資金を賭けて一攫千金をねらえる（負けることもあるので、ほどほどに）'],
+      ['🧑‍🍳', 'Lv.3 からアルバイトを雇える（パソコン）。調理・接客・洗い場・おまかせ の仕事をまかせられる'],
+      ['👥', 'ルームを作ると最大4人で一緒にお店を回せます。麺茹で・盛り付け・配膳・洗い物を分担しよう'],
+      ['🔨', '建築ボタン（B）でテーブル席・厨房機器・装飾を置ける。置いてある設備は狙って「🔧動かす」（F）'], ['🎥', 'Vキー／設定で一人称と三人称を切り替え'],
+    ];
+    m.append(...steps.map(([i, t]) => h('div', { class: 'help-row' }, h('span', { class: 'hi' }, i), h('span', {}, t))));
+    const md = modal('❓ 遊び方', [m, h('button', { class: 'btn big', onclick: () => md.close() }, 'わかった！')], { onClose: () => { this.ui.closed(); if (first) { this.app.profile.tutorialDone = true; this.app.saveLocal(); } } });
+    this.ui.opened(md);
+  }
+  stop() {
+    this.R.setViewShift?.(0);
+    if (this.input.wheelOff) this.input.wheelOff();
+    this.ui.closeAll(); this.ui.show(false);
+    this.R.setHighlight(null); this.R.setGhost(null); this.R.setFixtureHidden(null);
+    this.R.syncChars([], 0.016); this.R.syncHands([], null);
+    clearInterval(this._stateRetry);
+    if (this.room) { try { this.room.leave(); } catch (e) { /* noop */ } }
+    this.input.setRoom(false);
+    this.input.pointerFree = false;
+  }
+}
+export { escapeText, evalDish, griddleQ };

@@ -1,0 +1,39 @@
+{
+  "rules": {
+    "ramen": {
+      "saves": {
+        "$code": {
+          ".read": "auth != null && $code.length === 12",
+          ".write": "auth != null && $code.length === 12",
+          ".validate": "!newData.exists() || (newData.hasChildren(['d', 't']) && newData.child('d').isString() && newData.child('d').val().length < 3000000 && newData.child('t').isNumber())"
+        }
+      },
+      "lb": {
+        ".read": "auth != null",
+        ".indexOn": ["lv", "s", "p", "c"],
+        "$pid": {
+          ".write": "auth != null && $pid.length === 10",
+          ".validate": "newData.hasChildren(['n', 'lv', 's', 'p', 'c']) && newData.child('n').isString() && newData.child('n').val().length <= 12 && newData.child('lv').isNumber() && newData.child('lv').val() <= 50 && newData.child('s').isNumber() && newData.child('p').isNumber() && newData.child('c').isNumber() && newData.child('c').val() >= 0"
+        }
+      },
+      "rooms": {
+        "$rid": {
+          ".read": "auth != null",
+          ".write": "auth != null && $rid.length >= 4 && $rid.length <= 12",
+          "chat": {
+            "$msg": {
+              ".validate": "newData.hasChildren(['uid', 'n', 'm', 't']) && newData.child('m').isString() && newData.child('m').val().length <= 60"
+            }
+          }
+        }
+      },
+      "shops": {
+        "$rid": {
+          ".read": "auth != null",
+          ".write": "auth != null && $rid.length >= 4 && $rid.length <= 12",
+          ".validate": "!newData.exists() || (newData.hasChildren(['d', 't']) && newData.child('d').isString() && newData.child('d').val().length < 3000000 && newData.child('t').isNumber())"
+        }
+      }
+    }
+  }
+}
