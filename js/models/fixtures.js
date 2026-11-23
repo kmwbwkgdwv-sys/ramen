@@ -5,8 +5,8 @@ import { FIXTURES, TOPPINGS, SOUPS, basketPos, passPos } from '../data.js';
 import { tex, surf, signTexture, canvasTex, emoji, FONT, rr, shade } from '../textures.js';
 import { mat, smat, glassMat, T, box, rbox, cyl, sph, lathe, plane, torus, cone, add, M, vcolor } from './geo.js';
 
-import { ANCHOR, basic, sinkModel, stoveModel, boilerModel, toppingModel, boardModel, fridgeModel, dishrackModel, passModel, riceModel, gyozaModel, fryerModel, beerModel, tableModel, counterModel, benchModel, waterModel, trashModel, ticketModel, registerModel, plantModel, zashikiModel, kamidanaModel } from './equip.js';
-export { ANCHOR, basic };
+import { ANCHOR, basic, stockPotMesh, sinkModel, stoveModel, boilerModel, toppingModel, boardModel, fridgeModel, dishrackModel, passModel, riceModel, gyozaModel, fryerModel, beerModel, tableModel, counterModel, benchModel, waterModel, trashModel, ticketModel, registerModel, plantModel, zashikiModel, kamidanaModel } from './equip.js';
+export { ANCHOR, basic, stockPotMesh };
 const C = (c, o = {}) => mat(c, { r: 0.55, ...o });
 const STEEL = () => smat(surf('metal'), 0xe8ebee, { r: 0.3, m: 0.75 });
 const DARK = () => C(0x2f3337, { r: 0.45, m: 0.4 });
@@ -38,8 +38,8 @@ function steelTable(g, w, d, h = 0.9, legs = true) {
 }
 const BUILD = {
   // ---------- 厨房 ----------
-  pot(f) { return stoveModel(FIXTURES.pot, ANCHOR.pot); },
-  pot2(f) { return stoveModel(FIXTURES.pot2, ANCHOR.pot2); },
+  pot(f) { return stoveModel(FIXTURES.pot, ANCHOR.pot, { pot: !f.away }); },
+  pot2(f) { return stoveModel(FIXTURES.pot2, ANCHOR.pot2, { pot: !f.away }); },
   boiler(f) { return boilerModel(FIXTURES.boiler); },
   boiler6(f) { return boilerModel(FIXTURES.boiler6); },
   topping(f) { return toppingModel(); },

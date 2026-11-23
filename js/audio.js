@@ -392,6 +392,21 @@ export class Sfx {
       case 'win': [523, 659, 784, 1046].forEach((f, i) => tone(f, i * 0.08, 0.2, 'triangle', 0.13)); break;
       case 'lose': tone(392, 0, 0.25, 'triangle', 0.12, 330); tone(330, 0.22, 0.4, 'triangle', 0.12, 262); break;
       case 'jackpot': [523, 659, 784, 1046, 1318, 1568, 2093].forEach((f, i) => tone(f, i * 0.07, 0.4, 'square', 0.08)); noise(0, 0.6, 0.06, 8000); break;
+      // ---- 賭場の演出 ----
+      case 'drum': for (let i = 0; i < 28; i++) { const v = 0.05 + i / 28 * 0.13; noise(i * 0.055, 0.05, v, 160); tone(95 + i, i * 0.055, 0.05, 'triangle', v * 0.9, 70); } break; // ドラムロール（1.5秒・だんだん大きく）
+      case 'drumEnd': tone(80, 0, 0.35, 'triangle', 0.4, 45); noise(0, 0.3, 0.28, 120); noise(0.02, 0.5, 0.12, 6500); break; // ジャーン
+      case 'heart': tone(62, 0, 0.13, 'sine', 0.55, 40); tone(58, 0.2, 0.15, 'sine', 0.42, 38); break; // ドクン…
+      case 'tick': tone(1650, 0, 0.035, 'square', 0.07); break;
+      case 'tock': tone(1100, 0, 0.05, 'square', 0.09); break;
+      case 'reach': [440, 554, 659, 880, 1108].forEach((f, i) => tone(f, i * 0.09, 0.22, 'sawtooth', 0.06)); tone(1760, 0.45, 0.6, 'square', 0.05, 2200); break;
+      case 'kiin': tone(2637, 0, 0.9, 'sine', 0.12); tone(3520, 0.02, 0.8, 'sine', 0.06); noise(0, 0.25, 0.06, 9000); break; // 予告のキュイン
+      case 'diceLand': tone(520 + Math.random() * 260, 0, 0.05, 'square', 0.1); noise(0, 0.05, 0.12, 2500); break;
+      case 'rattle': for (let i = 0; i < 12; i++) { noise(i * 0.07, 0.04, 0.1 + Math.random() * 0.06, 1500 + Math.random() * 1500); tone(600 + Math.random() * 600, i * 0.07, 0.03, 'square', 0.035); } break; // 茶碗の中でサイコロが鳴る
+      case 'reelStop': tone(180, 0, 0.08, 'square', 0.16, 120); noise(0, 0.06, 0.12, 900); break;
+      case 'coins': for (let i = 0; i < 14; i++) tone(1300 + Math.random() * 900, i * 0.055 + Math.random() * 0.02, 0.09, 'triangle', 0.12); break;
+      case 'bigwin': [392, 523, 659, 784, 1046, 784, 1046, 1318, 1568].forEach((f, i) => tone(f, i * 0.11, 0.32, 'square', 0.07)); [1046, 1318, 1568, 2093].forEach((f) => tone(f, 1.0, 1.4, 'triangle', 0.08)); noise(0.95, 1.2, 0.05, 8000); break;
+      case 'shout': tone(330, 0, 0.18, 'sawtooth', 0.09, 440); tone(440, 0.16, 0.3, 'sawtooth', 0.08, 392); break; // 「勝負！」の掛け声っぽい音
+      case 'swoosh': noise(0, 0.35, 0.14, 1200); tone(300, 0, 0.3, 'sine', 0.05, 900); break;
       case 'drop': tone(700, 0, 0.5, 'sine', 0.06, 300); tone(110, 0.7, 0.18, 'triangle', 0.3, 60); noise(0.7, 0.18, 0.18, 300); tone(95, 0.95, 0.14, 'triangle', 0.22, 55); noise(0.95, 0.14, 0.12, 300); break;
       default: break;
     }

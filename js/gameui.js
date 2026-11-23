@@ -3,13 +3,14 @@ import { h, $, modal, toast, confirmBox, promptBox } from './ui.js';
 import {
   FIXTURES, FIXTURE_CATS, SOUPS, BROTHS, TARES, POT_PER, CASH_CHOICES, DRY_MAX, soupRecipe, TOPPINGS, SIDES, HARD, DISHES, DIRTY_MAX, INGREDIENTS, ING_LIST, ING_CATS, STAFF_ROLES, STAFF_SLOTS, STAFF_MAX, SPEEDS, STAFF_NAMES, GAMBLES, BET_CHIPS, CHOHAN_FEE, CHOHAN_T, SLOT_PAY, SLOT_CHERRY2, SLOT_SYMS,
   hasStaffLicense, fixtureUnlocked, staffLimit, xpNeed, closeTime, CHAT_PRESETS, SHOP, ALL_COLS, expandTargets, MAX_LEVEL, unlocksAt, ticketLimit, ingUnlocked, SHIPPING_FEE, ORDER_MAX,
-  menuValue, menuLimit, menuCost, MENU_RAMEN_MAX, TOP_MAX, OPEN_TIME,
+  menuValue, menuLimit, menuCost, MENU_RAMEN_MAX, TOP_MAX, OPEN_TIME, carryInfo, ingShort, CHOHAN_ZORO, SLOT_JP,
 } from './data.js';
 import { orderTotal, orderCost, fridgeCap, fridgeUsed, customerFactors, repStars, menuAvailable } from './sim.js';
 import { yen, fmtTime, mulberry32 } from './util.js';
 import { pimg, menuKey } from './thumbs.js';
 import { dishKey } from './models/food.js';
 import { dishText } from './game.js';
+import { GambleUI } from './gamble.js';
 
 const PHASE = { prep: '準備中', open: '営業中', closing: '店じまい', summary: '本日の結果' };
 const lineName = (st, l) => (l[0] === 'ramen' ? st.menu.find((m) => m.id === l[1])?.name || 'ラーメン' : SIDES[l[0]]?.name || l[0]);
@@ -41,6 +42,7 @@ export class GameUI {
     this.edgeEl = h('div', { class: 'guide-edge hidden' }, h('i')); H.append(this.edgeEl);
     this.handEl = h('div', { class: 'hand-card hidden' }); H.append(this.handEl);
     this._hudT = 0; this.open = null; this.ordOpen = true;
+    this.gamble = new GambleUI(this);
   }
   // 「次にやること」と、画面の外にあるときの矢印
   setGuide(text, edge, urgent, near) {
@@ -54,7 +56,7 @@ export class GameUI {
   }
   // 手に持っている物（絵と説明）
   setHand(hd) {
-    const key = !hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) + (hd.d.men != null ? Math.floor(hd.d.men) : '') + (hd.d.fill != null ? Math.round(hd.d.fill * 20) : '') : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t + (hd.n ?? Math.round((hd.u || 0) * 20));
+    const key = !hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) + (hd.d.men != null ? Math.floor(hd.d.men) : '') + (hd.d.fill != null ? Math.round(hd.d.fill * 20) : '') : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'pot' ? 'p' + hd.ft + Math.round(hd.w * 20) + (hd.dirty ? 'd' + Math.round((hd.cl || 0) * 10) : '') : hd.t === 'ing' ? 'i' + hd.k + hd.n + Math.round((hd.ws || 0) * 10) : hd.t === 'cash' ? 'c' + hd.v : hd.t + (hd.n ?? Math.round((hd.u || 0) * 20));
     if (key === this.handEl._k) return;
     this.handEl._k = key; this.handEl.innerHTML = ''; this.handEl.classList.toggle('hidden', !hd);
     if (!hd) return;
@@ -62,6 +64,9 @@ export class GameUI {
     else if (hd.t === 'dirty') this.handEl.append(pimg('d:dirty' + hd.a.join('.'), '🍽️', 'hc', { d: { k: 'dirty', a: hd.a } }), h('div', { class: 'hc-t' }, h('small', {}, '下げた食器'), h('b', {}, `${hd.a.length}/${DIRTY_MAX}枚`)));
     else if (hd.t === 'ext') this.handEl.append(pimg('tool:ext', '🧯', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, '消火器'), h('b', {}, `残り ${Math.round((hd.u || 0) * 100)}%`)));
     else if (hd.t === 'shuri') this.handEl.append(pimg('tool:shuri', '✴️', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, '手裏剣'), h('b', {}, `残り ${hd.n}枚`)));
+    else if (hd.t === 'pot') { const wl = hd.w >= 1 ? 4 : Math.floor(hd.w * 4); this.handEl.append(pimg(`pot:${hd.ft}:${wl}:${hd.dirty ? 1 : 0}`, '🫕', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, hd.ft === 'pot2' ? '大寸胴鍋' : '寸胴鍋'), h('b', {}, hd.dirty ? `だしがら（洗う ${Math.round((hd.cl || 0) * 100)}%）` : hd.w >= 1 ? '水いっぱい（重い）' : hd.w > 0 ? `水 ${Math.round(hd.w * 100)}%` : '空っぽ'))); }
+    else if (hd.t === 'ing') { const I = INGREDIENTS[hd.k], C = carryInfo(hd.k); this.handEl.append(pimg(hd.k === 'kome' && (hd.ws || 0) >= 1 ? 'rice:washed' : 'ing:' + hd.k, I?.icon || '📦', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, `→ ${C?.to || ''}`), h('b', {}, `${ingShort(hd.k)} ×${hd.n}${C?.unit || ''}${hd.k === 'kome' ? ((hd.ws || 0) >= 1 ? '（研いだ）' : hd.ws ? `（研ぎ ${Math.round(hd.ws * 100)}%）` : '') : ''}`))); }
+    else if (hd.t === 'cash') this.handEl.append(pimg('tool:cash', '💴', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, '手持ちのお金'), h('b', {}, yen(hd.v))));
   }
   show(v) { this.hud.classList.toggle('hidden', !v); }
   bind(game) {
@@ -143,31 +148,29 @@ export class GameUI {
   showCross(v) { this.cross.classList.toggle('hidden', !v); }
 
   // ---------- 調理の選択 ----------
-  // 寸胴鍋に入れる材料（何回でも足せる）
-  openPotPicker(fid) {
-    const g = this.g, body = h('div', {});
+  // 冷蔵庫：手に持って運ぶ食材を選ぶ
+  openFridgePicker(fid) {
+    const g = this.g, body = h('div', { class: 'stock-list' });
     const draw = () => {
-      const st = g.store, f = g.fx(fid), P = f?.pot, def = f && FIXTURES[f.t]; if (!def) return;
-      const cap = def.pot.sv / POT_PER, mains = Object.entries(P?.n || {}).filter(([k]) => INGREDIENTS[k]?.broth).reduce((t, [, v]) => t + v, 0);
-      body.innerHTML = '';
-      body.append(h('div', { class: 'pot-now' }, h('b', {}, '鍋の中：'), P?.n && Object.keys(P.n).length ? Object.entries(P.n).map(([k, n]) => h('span', { class: 'chip img' }, pimg('ing:' + k, INGREDIENTS[k].icon, 'ci'), `${INGREDIENTS[k].name.split('（')[0]}×${n}`)) : h('span', { class: 'muted' }, '水だけ'), P?.b ? h('span', { class: 'chip on' }, `→ ${BROTHS[P.b].name}・${P.sv}杯分`) : null));
-      const list = ING_LIST.filter((p) => p.cat === 'soup' && st.level >= p.lv);
-      body.append(h('div', { class: 'pick-grid' }, list.map((p) => {
-        const n = st.stock[p.id] || 0, full = p.broth ? mains >= cap : (P?.n?.[p.id] || 0) >= 2;
-        const note = p.broth ? `${BROTHS[p.broth].short}スープ・1つで${POT_PER}杯分` : p.id === 'yasai' ? '香りが立つ（品質＋）' : 'うま味が出る（品質＋）';
-        return h('button', { class: 'pick' + (n && !full ? '' : ' none'), onclick: () => { if (!n) { toast(`${p.name}がありません（パソコンで仕入れよう）`, 'warn'); return; } if (full) { toast(p.broth ? `この鍋に入る骨などは${cap}つまで` : 'もう十分入っています', 'warn'); return; } g.act({ t: 'potAdd', fid, id: p.id }); setTimeout(draw, 120); } },
-          pimg('ing:' + p.id, p.icon, 'pi'), h('b', {}, p.name.split('（')[0]), h('small', {}, `在庫 ${n}`), h('small', { class: 'muted' }, note));
-      })));
-      body.append(h('p', { class: 'muted small' }, `骨などの材料（鶏ガラ・豚骨・煮干し）を入れると、いちばん多い材料のだしになります（この鍋は${cap}つまで＝${def.pot.sv}杯分）。入れたら火をつけて、出てきたアクを取ろう`));
-      body.append(h('div', { class: 'row-end' }, P?.b && !P.fire ? h('button', { class: 'btn', onclick: () => { g.act({ t: 'fire', fid }); m.close(); } }, '🔥 火をつける') : null, h('button', { class: 'btn ghost', onclick: () => m.close() }, 'とじる')));
+      const st = g.store; body.innerHTML = '';
+      body.append(h('div', { class: 'muted small' }, `冷蔵庫 ${fridgeUsed(st)}/${fridgeCap(st)}パック。食材を選ぶと手に持ちます。使う設備まで運ぼう`));
+      for (const [cat, C] of Object.entries(ING_CATS)) {
+        if (cat === 'dish') continue;
+        const items = ING_LIST.filter((p) => p.cat === cat && st.level >= p.lv && carryInfo(p.id));
+        if (!items.length) continue;
+        body.append(h('div', { class: 'ed-label' }, C.icon + ' ' + C.name), h('div', { class: 'pick-grid' }, items.map((p) => {
+          const n = st.stock[p.id] || 0, K = carryInfo(p.id), ok = n >= K.take;
+          return h('button', { class: 'pick' + (ok ? '' : ' none'), onclick: () => { if (!ok) { toast(`${p.name}がありません（パソコンで仕入れよう）`, 'warn'); return; } g.act({ t: 'ingTake', fid, k: p.id }); m.close(); } },
+            pimg('ing:' + p.id, p.icon, 'pi'), h('b', {}, ingShort(p.id)), h('small', {}, `在庫 ${n}${p.unit}・1回${K.take}${K.unit}`), h('small', { class: 'muted' }, `→ ${K.to}`));
+        })));
+      }
     };
-    const m = modal('🍲 寸胴鍋に材料を入れる', [body], { onClose: () => this.closed() });
+    const m = modal('🧊 冷蔵庫から取る', [body, h('button', { class: 'btn ghost', onclick: () => m.close() }, 'とじる')], { onClose: () => this.closed() });
     this.opened(m); draw();
   }
-  openSoupPicker(fid) { return this.openPotPicker(fid); }
   // タレ（かえし）：作る／丼に入れる
-  openTarePicker(fid, mode = 'in') {
-    const g = this.g, st = g.store, make = mode === 'make';
+  openTarePicker(fid) {
+    const g = this.g, st = g.store, make = false;
     const list = Object.entries(TARES).filter(([, T]) => st.level >= T.lv);
     const grid = h('div', { class: 'pick-grid' }, list.map(([k, T]) => {
       const raw = st.stock[T.raw] || 0, have = st.tare?.[k] || 0, ok = make ? raw > 0 : have > 0;
@@ -191,16 +194,6 @@ export class GameUI {
       h('div', { class: 'muted small' }, '金庫から出す'), row('safe', safe),
       h('p', { class: 'muted small' }, 'つかんだお金を持って、となりの賭場の台で「お金をセット」すると賭けられます。勝ったお金は手持ちに入るので、レジに戻しましょう（1日の終わりには自動でレジに戻ります）'),
     ], { onClose: () => this.closed() });
-    this.opened(m);
-  }
-  openPrepPicker(fid) {
-    const g = this.g, st = g.store;
-    const grid = h('div', { class: 'pick-grid' }, Object.entries(TOPPINGS).filter(([, t]) => st.level >= t.lv).map(([k, t]) => {
-      const raw = st.stock[t.raw] || 0;
-      return h('button', { class: 'pick' + (raw ? '' : ' none'), onclick: () => { if (!raw) { toast(`${INGREDIENTS[t.raw].name}がありません（パソコンで仕入れよう）`, 'warn'); return; } g.act({ t: 'chop', fid, tid: k, dur: 0.05 }); m.close(); toast(`🔪 ${t.name}の仕込み開始！まな板を狙って長押しで切ろう`, 'ok'); } },
-        pimg('tp:' + k, t.icon, 'pi'), h('b', {}, t.name), h('small', {}, `仕込み済み ${st.prep[k] || 0}人前`), h('small', { class: 'muted' }, `${INGREDIENTS[t.raw].name} ${raw}${INGREDIENTS[t.raw].unit} → 1つで${t.per}人前`));
-    }));
-    const m = modal('🔪 なにを仕込む？', [grid], { onClose: () => this.closed() });
     this.opened(m);
   }
   openDishPicker(fid) {
@@ -401,94 +394,11 @@ export class GameUI {
     wrap.append(h('p', { class: 'muted small' }, `資金 ${yen(st.money)}。お店は左へ1列（4m）ずつ広げられます。1列ふえると、厨房・カウンター席4つ・客席のスペースが増えます`), h('div', { class: 'xgrid' }, h('div', { class: 'xrow street' }, h('div', { class: 'xstreet' }, '⬆ 奥：厨房（勝手口・ドローン）')), row, h('div', { class: 'xrow street' }, h('div', { class: 'xstreet door' }, '⬇ 手前：客席・入口（のれん）・通り'))));
     return wrap;
   }
-  // ---------- 賭場 ----------
-  openGamble(kind, fid) {
-    if (kind === 'chohan') return this.openChohan();
-    if (kind === 'chinchiro') return this.openChinchiro();
-    return this.openSlot();
-  }
+  // ---------- 賭場（演出は gamble.js） ----------
+  openGamble(kind) { this.gamble.open(kind); }
   cash() { const hd = this.g.hand(); return hd?.t === 'cash' ? hd.v : 0; }
-  chips(onPick, cur) {
-    const cash = this.cash();
-    if (!cash) return h('div', { class: 'no-cash' }, '💴 お金を持っていません。お店のレジを開けて、お金をつかんでこよう');
-    return h('div', { class: 'gchips' }, BET_CHIPS.filter((v) => v < cash).map((v) => h('button', { class: 'gchip' + (cur === v ? ' on' : ''), onclick: () => onPick(v) }, v >= 10000 ? `${v / 10000}万` : `${v.toLocaleString()}`)), h('button', { class: 'gchip all' + (cur === cash || cur === 'all' ? ' on' : ''), onclick: () => onPick('all') }, `ぜんぶ ${yen(cash)}`));
-  }
   betOf(bet) { const c = this.cash(); return bet === 'all' ? c : Math.min(bet, c); }
-  openChohan() {
-    const g = this.g, body = h('div', { class: 'gpanel chohan' });
-    let bet = this._bet || 1000;
-    const draw = () => {
-      const st = g.store, C = g.dyn?.ch; if (!C) return;
-      const mine = C.b?.[g.me];
-      const key = JSON.stringify([C.ph, Math.ceil(C.t), C.d, C.b, bet, this.cash(), C.n]);
-      if (key === this._chKey) return; this._chKey = key;
-      body.innerHTML = '';
-      const others = Object.entries(C.b || {}).filter(([k]) => k !== g.me);
-      body.append(h('div', { class: 'g-status ' + C.ph }, C.ph === 'bet' ? `🎲 第${C.n}番勝負　さあ張った張った！ あと ${Math.ceil(C.t)}秒` : C.ph === 'roll' ? '🥁 壺を振っています…' : `🎲 ${C.d[0]}・${C.d[1]} の ${(C.d[0] + C.d[1]) % 2 ? '半' : '丁'}！`));
-      body.append(h('div', { class: 'dice-row' }, C.ph === 'show' && C.d ? C.d.map((v) => h('span', { class: 'die big' }, '⚀⚁⚂⚃⚄⚅'[v - 1])) : h('span', { class: 'cup' + (C.ph === 'roll' ? ' shake' : '') }, '🥣')));
-      body.append(h('div', { class: 'cho-han' },
-        h('button', { class: 'chbtn cho' + (mine?.[0] === 'cho' ? ' on' : ''), disabled: C.ph !== 'bet', onclick: () => g.act({ t: 'bet', s: 'cho', a: this.betOf(bet) }) }, h('b', {}, '丁'), h('small', {}, 'ここにお金をセット')),
-        h('button', { class: 'chbtn han' + (mine?.[0] === 'han' ? ' on' : ''), disabled: C.ph !== 'bet', onclick: () => g.act({ t: 'bet', s: 'han', a: this.betOf(bet) }) }, h('b', {}, '半'), h('small', {}, 'ここにお金をセット'))));
-      body.append(h('div', { class: 'muted small center' }, `セットするお金（手持ち ${yen(this.cash())}）・丁＝合計が偶数／半＝奇数`), this.chips((v) => { bet = this._bet = v; this._chKey = ''; draw(); }, bet));
-      body.append(h('div', { class: 'g-mine' }, mine ? `あなた：${mine[0] === 'cho' ? '丁' : '半'}に ${yen(mine[1])}` : 'まだ賭けていません', mine && C.ph === 'bet' ? h('button', { class: 'btn tiny ghost', onclick: () => g.act({ t: 'bet', cancel: 1 }) }, '取り消す') : null));
-      if (others.length) body.append(h('div', { class: 'g-others' }, '👥 ', others.map(([, b]) => `${b[2] || '仲間'}：${b[0] === 'cho' ? '丁' : '半'} ${yen(b[1])}`).join('　')));
-      body.append(h('div', { class: 'g-hist' }, '出目：', (C.h || []).map(([a, b2]) => h('span', { class: 'hist ' + ((a + b2) % 2 ? 'han' : 'cho') }, `${a + b2}${(a + b2) % 2 ? '半' : '丁'}`))));
-      body.append(h('p', { class: 'muted small' }, `当たるとセットしたお金が2倍になって手元に返ってきます（寺銭${Math.round(CHOHAN_FEE * 100)}%を引く）。ルームの仲間と同じ勝負に賭けられます。勝ったお金はレジに戻そう`)); void st;
-    };
-    const m = modal('🎲 丁半博打', [body], { onClose: () => { clearInterval(this._gT); this.closed(); } });
-    this.opened(m); this._chKey = ''; draw();
-    clearInterval(this._gT); this._gT = setInterval(draw, 200);
-  }
-  openChinchiro() {
-    const g = this.g, body = h('div', { class: 'gpanel chin' });
-    let bet = this._bet || 1000;
-    this._chinRes = null;
-    const draw = () => {
-      const st = g.store; body.innerHTML = '';
-      const R = this._chinRes;
-      body.append(h('div', { class: 'g-status' }, R ? (R.net > 0 ? `🎉 勝ち！ +${yen(R.net)}` : R.net < 0 ? `💸 負け… −${yen(-R.net)}` : '🤝 引き分け') : '🥣 親（胴元）と勝負！'));
-      const show = (who, r) => h('div', { class: 'chin-side' }, h('b', {}, who), ...r.rolls.map((d, i) => h('div', { class: 'chin-roll' + (i === r.rolls.length - 1 ? ' last' : '') }, d.map((v) => h('span', { class: 'die' }, '⚀⚁⚂⚃⚄⚅'[v - 1])))), h('div', { class: 'chin-hand' }, r.h.name));
-      if (R) body.append(h('div', { class: 'chin-res' }, show('親', R.dealer), show('あなた', R.you)));
-      body.append(h('div', { class: 'muted small center' }, '賭け金'), this.chips((v) => { bet = this._bet = v; draw(); }, bet));
-      body.append(h('button', { class: 'btn big', disabled: !this.cash(), onclick: () => { this._chinRes = 'wait'; g.act({ t: 'chinchiro', a: this.betOf(bet) }); setTimeout(draw, 200); } }, `🎲 ${yen(this.betOf(bet))} をセットして勝負！`));
-      body.append(h('p', { class: 'muted small' }, '役：ピンゾロ（1・1・1）5倍＞ゾロ目 3倍＞シゴロ（4・5・6）2倍＞目（2つそろった残りの数）＞目なし。ヒフミ（1・2・3）は2倍払い。負けると親の役の倍率ぶん払います'));
-      body.append(h('div', { class: 'muted small' }, `手持ち ${yen(this.cash())}`)); void st;
-    };
-    this._gameRedraw = (e) => { if (e.g === 'chinchiro') { this._chinRes = e; this.g.app.sfx.play(e.net > 0 ? 'win' : 'lose'); draw(); } };
-    const m = modal('🥣 チンチロリン', [body], { onClose: () => { this._gameRedraw = null; this.closed(); } });
-    this.opened(m); draw();
-  }
-  openSlot() {
-    const g = this.g, body = h('div', { class: 'gpanel slot' });
-    let bet = Math.min(this._bet || 100, 10000);
-    const reels = [h('div', { class: 'reel' }, '7'), h('div', { class: 'reel' }, '🍒'), h('div', { class: 'reel' }, '🍜')];
-    const res = h('div', { class: 'g-status' }, '🎰 3つそろえよう！');
-    let spinning = false;
-    const syms = SLOT_SYMS.map((s) => s[0]);
-    const draw = () => {
-      body.innerHTML = '';
-      body.append(res, h('div', { class: 'reels' }, reels));
-      body.append(h('div', { class: 'muted small center' }, '1回に入れるお金'), this.chips((v) => { bet = this._bet = v; draw(); }, bet));
-      body.append(h('button', { class: 'btn big', disabled: !this.cash(), onclick: () => { if (spinning) return; spinning = true; res.textContent = '🎰 回転中…'; g.act({ t: 'slot', a: this.betOf(bet) }); let k = 0; this._spin = setInterval(() => { reels.forEach((r, i) => { r.textContent = syms[(k + i * 2) % syms.length]; }); k++; }, 70); setTimeout(() => { if (spinning) { clearInterval(this._spin); spinning = false; } }, 4000); } }, `🎰 ${yen(this.betOf(bet))} 入れて回す`));
-      body.append(h('div', { class: 'paytable' }, Object.entries(SLOT_PAY).map(([s, v]) => h('span', {}, `${s}${s}${s} ×${v}`)), h('span', {}, `🍒🍒 ×${SLOT_CHERRY2}`)));
-      body.append(h('div', { class: 'muted small' }, `手持ち ${yen(this.cash())}`));
-    };
-    this._gameRedraw = (e) => {
-      if (e.g !== 'slot') return;
-      setTimeout(() => {
-        clearInterval(this._spin); spinning = false;
-        e.r.forEach((s, i) => setTimeout(() => { reels[i].textContent = s; reels[i].classList.add('stop'); setTimeout(() => reels[i].classList.remove('stop'), 300); g.app.sfx.play('click'); }, i * 260));
-        setTimeout(() => { res.textContent = e.mult ? `🎉 ×${e.mult}！ +${yen(e.net)}` : '…はずれ'; g.app.sfx.play(e.mult >= 20 ? 'jackpot' : e.mult ? 'win' : 'lose'); draw(); }, 820);
-      }, 600);
-    };
-    const m = modal('🎰 スロット', [body], { onClose: () => { clearInterval(this._spin); this._gameRedraw = null; this.closed(); } });
-    this.opened(m); draw();
-  }
-  onGamble(e) {
-    if (e.g === 'chohan') { toast(e.win ? `🎲 ${e.d[0]}・${e.d[1]}の${e.res === 'cho' ? '丁' : '半'}！ 当たり！ +${yen(e.net)}` : `🎲 ${e.d[0]}・${e.d[1]}の${e.res === 'cho' ? '丁' : '半'}… はずれ −${yen(-e.net)}`, e.win ? 'money' : 'warn', 3000); this.g.app.sfx.play(e.win ? 'win' : 'lose'); return; }
-    if (this._gameRedraw) this._gameRedraw(e);
-    else toast(e.net >= 0 ? `🎲 +${yen(e.net)}` : `🎲 −${yen(-e.net)}`, e.net >= 0 ? 'money' : 'warn');
-  }
+  onGamble(e) { this.gamble.onEvent(e); }
   showCritic(e) {
     const m = modal('🕶️ ラーメン評論家', [h('div', { class: 'critic ' + (e.ok ? 'ok' : 'ng') }, h('div', { class: 'cr-score' }, `${e.q}点`), h('div', { class: 'cr-m' }, `「${e.m}」`), e.ok ? h('div', { class: 'cr-prize' }, `🏆 合格！評判が大きく上がった！ 掲載の賞金 +${yen(e.prize)}`) : h('div', { class: 'cr-prize bad' }, '😓 不合格…評判が下がってしまった')), h('button', { class: 'btn big', onclick: () => m.close() }, 'OK')], { onClose: () => this.closed() });
     this.opened(m);

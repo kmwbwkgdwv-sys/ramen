@@ -4,6 +4,7 @@ import { Sim, fitPlacement, potReady, potHeat, potAku, soupQuality, griddleQ, be
 import {
   FIXTURES, SOUPS, TOPPINGS, SIDES, GRIDDLE, HARD, DISHES, INGREDIENTS, GAMBLES, PLAYER_BOUNDS, PLAYER_SPAWN, BUILDING, HALL, STAFF_ROLES, SOUP_READY, SOUP_RICH, RICE_READY, NOODLE_OVER, DIRTY_MAX,
   getWalls, fixtureFootprint, snapFixture, worldToLocal, localToWorld, pickSeat, pickBasket, pickPass, basketPos, isCounter, noodleLabel, inHall, BROTHS, TARES, soupRecipe, DRY_MAX,
+  carryInfo, ingFits, ingShort, ingUnlocked, CARRY_SPEED, POT_PER,
 } from './data.js';
 import { clamp, yen, dist, angleLerp, lerp, escapeText } from './util.js';
 import { toast, h, modal, confirmBox } from './ui.js';
@@ -62,7 +63,7 @@ export class Game {
     this.input.wheelOff = this.input.on('wheel', (d) => { this.camDist = clamp(this.camDist + d * 0.4, 1.6, 6); });
     if (room) this.ui.setRoom([h('b', {}, '👥 ルーム ' + roomId), h('span', { class: 'plist2' })]);
     if (!this.app.profile.tutorialDone && mode !== 'client') setTimeout(() => { if (this.app.game === this) this.help(true); }, 600);
-    setTimeout(() => { const st = this.store; if (st && st.day === 1 && st.phase === 'prep') toast('🍜 寸胴鍋のスープはもう炊けています。外の札を「営業中」にして、お客さんの注文を作ろう！', 'ok', 5500); }, 2500);
+    setTimeout(() => { const st = this.store; if (st && st.day === 1 && st.phase === 'prep') toast('🍜 まずは仕込み！寸胴鍋を持って洗い場の水道で水を張り、冷蔵庫から鶏ガラを運んでだしを炊こう（画面の上の「次」に従えばOK）', 'ok', 6500); }, 2500);
   }
   _bindRoom() {
     const R = this.room;
@@ -239,12 +240,13 @@ export class Game {
     const p = this.pc, s = this.app.settings;
     p.yaw -= inp.look.x; p.pitch = clamp(p.pitch + inp.look.y, -1.1, 1.3);
     const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw), rx = -Math.cos(p.yaw), rz = Math.sin(p.yaw);
-    const sp = (inp.run ? 5.4 : 3.4) * (this.state === 'build' ? 1.1 : 1);
+    const hd = this.hand(), full = hd?.t === 'pot' && hd.w > 0;
+    const sp = (inp.run && !full ? 5.4 : 3.4) * (this.state === 'build' ? 1.1 : 1) * (hd?.t === 'pot' ? (full ? CARRY_SPEED.potFull : CARRY_SPEED.pot) : 1);
     const mx = (fx * inp.move.y + rx * inp.move.x) * sp * dt, mz = (fz * inp.move.y + rz * inp.move.x) * sp * dt;
     this.moving = Math.hypot(mx, mz) > 1e-4;
     if (this.moving) { this._move(mx, mz); if (s.cam !== 'first') p.ry = angleLerp(p.ry, Math.atan2(mx, mz), Math.min(1, dt * 12)); }
     if (s.cam === 'first') p.ry = p.yaw;
-    if (inp.edges.has('jump') && p.grounded) { p.vy = 4.6; p.grounded = false; this.app.sfx.play('jump', 0.5); }
+    if (inp.edges.has('jump') && p.grounded && !full) { p.vy = 4.6; p.grounded = false; this.app.sfx.play('jump', 0.5); }
     p.vy -= 13 * dt; p.y += p.vy * dt;
     if (p.y <= 0) { p.y = 0; p.vy = 0; p.grounded = true; }
     this._camera(dt);
@@ -341,7 +343,7 @@ export class Game {
     if (!(hd?.t === 'dish' && hd.d.k === 'bowl' && hd.d.broth && hd.d.men == null) || f.bk[bi]) return bi;
     const clk = this.clk(), want = this._focusLine()?.[2] || 'futsu', [lo, hi] = HARD[want]?.t || [21, 27];
     let best = -1, bs = Infinity;
-    f.bk.forEach((x, i) => { if (!x) return; const s = clk - x.t0, sc = s < lo ? lo - s + 3 : s > hi ? s - hi : -s * 0.01; if (sc < bs) { bs = sc; best = i; } });
+    f.bk.forEach((x, i) => { if (!x) return; const s = clk - x.t0, sc = (s < lo ? lo - s + 3 : s > hi ? s - hi : -s * 0.01) + (x.by ? 60 : 0); if (sc < bs) { bs = sc; best = i; } }); // アルバイトが茹でている麺はなるべく取らない
     return best >= 0 ? best : bi;
   }
   // ---------- 次にやること（ガイド） ----------
@@ -355,39 +357,60 @@ export class Game {
     if (dyn?.f?.length) { const fire = this.fx(dyn.f[0][0]); if (hd?.t === 'ext') return G('🔥 火に向けて長押しで消火！', fire, { urgent: true }); return G('🔥 火事！消火器を取って消そう', this._fxOf((f) => f.t === 'ext') || fire, { urgent: true }); }
     if (dyn?.th && !['down', 'run'].includes(dyn.th[5])) { if (hd?.t === 'shuri') return G('🥷 泥棒を画面のまん中に入れて手裏剣を投げよう', null, { urgent: true, pos: { x: dyn.th[0], y: 2.1, z: dyn.th[1] } }); const sh = this._fxOf((f) => f.t === 'shuriken'); if (sh) return G('🥷 泥棒！手裏剣ケースから手裏剣を取ろう', sh, { urgent: true }); }
     if (hd?.t === 'ext' || hd?.t === 'shuri') return G('道具を使い終わったら「しまう」', null);
+    const dryP = st.fixtures.find((f) => FIXTURES[f.t]?.pot && f.pot?.fire && !(f.pot.w > 0) && !f.br);
+    if (dryP) return G('⚠ 空焚き！寸胴鍋の火を止めよう（このままだと火事になる）', dryP, { urgent: true });
     if (hd?.t === 'cash') return inHall(this.pc.x, this.pc.z, 0.5) ? G(`🎲 台でお金（${yen(hd.v)}）をセットして勝負！ 終わったらレジに戻そう`, this._fxOf((f, D) => D.gamble)) : G(`💴 お金（${yen(hd.v)}）を持っています：となりの賭場へ行くか、レジに戻そう`, this._fxOf((f, D) => D.gamble === 'chohan') || this._fxOf((f) => f.t === 'register'));
     if (hd?.t === 'clean') return G('🍽️ 洗った食器を食器棚にしまおう', this._fxOf(RACK));
+    const SINK = (f, D) => D.sink, FR = () => this._fxOf((f, D) => D.cap);
+    if (hd?.t === 'pot') { if (hd.dirty) return G('🧽 洗い場で鍋のだしがらを捨てて洗おう（長押し）', this._fxOf(SINK)); if (hd.w < 1) return G('🚰 洗い場の水道で鍋に水を張ろう（長押し）', this._fxOf(SINK)); return G('🍲 水の入った鍋をコンロに戻そう（重いのでゆっくり）', this.fx(hd.fid)); }
+    if (hd?.t === 'ing' && INGREDIENTS[hd.k]) {
+      const dest = this._fxOf((f, D) => ingFits(hd.k, D, hd)), nm = ingShort(hd.k), I = INGREDIENTS[hd.k];
+      if (hd.k === 'kome') return (hd.ws || 0) < 1 ? G('🍚 洗い場で米を研ごう（長押し）', dest) : G('🍚 研いだ米を炊飯器に入れて炊こう', dest);
+      if (hd.k === 'men') return G('🍜 茹で麺機の空いているてぼに麺を入れよう', dest);
+      if (I.cat === 'soup') return G(`🍲 ${nm}を寸胴鍋に入れよう`, dest);
+      if (I.cat === 'tare') return G(`🫙 トッピング台で${nm}をあけてタレを作ろう`, dest);
+      if (I.cat === 'top') return G(`🔪 ${nm}をまな板にのせて切ろう`, dest);
+      return G(`${I.icon} ${nm}を${carryInfo(hd.k)?.to || ''}へ運ぼう`, dest);
+    }
     if (hd?.t === 'dirty') return G(hd.a.length >= DIRTY_MAX ? '🫧 洗い場のシンクに入れよう（遠くから投げ入れもできる）' : '🫧 食器を洗い場のシンクへ', this._fxOf((f, D) => D.sink));
     // だしの準備（スープの種類ごと）
-    const brothStep = (soupK, urgent) => {
+    const brothStep = (soupK) => {
       const S = SOUPS[soupK], B = BROTHS[S.broth];
       const ok = st.fixtures.find((f) => f.pot?.b === S.broth && f.pot.sv > 0 && !f.br);
       if (ok) {
-        const aku = potAku(ok.pot, clk);
-        if (ok.pot.fire && aku > 0.3) return G(`🥄 寸胴鍋のアクを取ろう（長押し）`, ok);
-        if (!ok.pot.fire && !potReady(ok, clk)) return G('🔥 寸胴鍋の火をつけよう', ok);
+        const P0 = ok.pot, aku = potAku(P0, clk);
+        if (P0.fire && aku > 0.3) return G(`🥄 寸胴鍋のアクを取ろう（長押し）`, ok);
+        // 火をつける前に：鍋に入るだけ骨を入れる → 香味野菜
+        if (!P0.fire && !(P0.used > 0)) {
+          const cap = FIXTURES[ok.t].pot.sv / POT_PER, mains = Object.entries(P0.n || {}).filter(([k]) => INGREDIENTS[k]?.broth).reduce((t, [, v]) => t + v, 0);
+          if (mains < cap && (st.stock[B.item] || 0) > 0) return G(`🧊 もう1つ${ingShort(B.item)}を入れよう（${(mains + 1) * POT_PER}杯分になる）`, FR(), { ing: B.item });
+          if (!P0.n?.yasai && (st.stock.yasai || 0) > 0 && ingUnlocked('yasai', st.level)) return G('🧄 冷蔵庫の香味野菜も鍋に入れよう（だしがおいしくなる）', FR(), { ing: 'yasai' });
+        }
+        if (!P0.fire && !potReady(ok, clk)) return G('🔥 寸胴鍋の火をつけよう', ok);
         return null;
       }
-      const pot = this._fxOf((f, D) => D.pot && !f.br && (!f.pot || !(f.pot.w > 0) || !f.pot.b || f.pot.sv <= 0)) || this._fxOf((f, D) => D.pot);
-      if (!pot) return null;
+      const pot = this._fxOf((f, D) => D.pot && !f.br && (f.away || !f.pot || !(f.pot.w > 0) || !f.pot.b || f.pot.sv <= 0)) || this._fxOf((f, D) => D.pot);
+      if (!pot || pot.away) return null; // 仲間が水を張りに行っている
       const P = pot.pot;
       if (P?.fire && !(P.w > 0)) return G('⚠ 空焚き！寸胴鍋の火を止めよう', pot, { urgent: true });
-      if (!P || !(P.w > 0)) return G(`🚰 寸胴鍋に水を入れよう（${B.name}を炊く）`, pot);
-      if (!P.b) return (st.stock[B.item] || 0) > 0 ? G(`🦴 寸胴鍋に${INGREDIENTS[B.item].name}を入れよう（香味野菜もあると◎）`, pot) : G(`💻 ${INGREDIENTS[B.item].name}がない！パソコンで仕入れよう`, PC());
+      if (!P || !(P.w > 0)) return G(P?.dirty ? `🫕 寸胴鍋を持って洗い場へ（だしがらを洗って水を張る）` : `🫕 寸胴鍋を持って、洗い場の水道で水を張ろう（${B.name}を炊く）`, pot);
+      if (!P.b) return (st.stock[B.item] || 0) > 0 ? G(`🧊 冷蔵庫から${ingShort(B.item)}を取って、寸胴鍋に入れよう`, FR(), { ing: B.item }) : G(`💻 ${INGREDIENTS[B.item].name}がない！パソコンで仕入れよう`, PC());
+      if (!P.fire && !P.n?.yasai && !(P.used > 0) && (st.stock.yasai || 0) > 0) return G('🧄 冷蔵庫の香味野菜も鍋に入れよう（だしがおいしくなる）', FR(), { ing: 'yasai' });
       if (!P.fire) return G('🔥 寸胴鍋の火をつけよう', pot);
-      void urgent; return null;
+      return null;
     };
     const tareStep = (soupK) => {
       const T = TARES[SOUPS[soupK].tare]; if ((st.tare?.[SOUPS[soupK].tare] || 0) > 0) return null;
       const tb = this._fxOf(TOP);
       if (tb?.tj) return G(`🥄 トッピング台でタレを混ぜよう（長押し）`, tb);
-      return (st.stock[T.raw] || 0) > 0 ? G(`🫙 トッピング台で${T.name}を作ろう`, tb) : G(`💻 ${INGREDIENTS[T.raw].name}がない！パソコンで仕入れよう`, PC());
+      return (st.stock[T.raw] || 0) > 0 ? G(`🧊 冷蔵庫から${ingShort(T.raw)}を取って、トッピング台で${T.short}を作ろう`, FR(), { ing: T.raw }) : G(`💻 ${INGREDIENTS[T.raw].name}がない！パソコンで仕入れよう`, PC());
     };
     if (st.phase === 'prep') {
       const soups = [...new Set(st.menu.filter((m) => m.on && m.kind === 'ramen').map((m) => m.soup))];
-      for (const k of soups) { const g = brothStep(k); if (g) return G('準備：' + g.text, g.f); }
-      for (const k of soups) { const g = tareStep(k); if (g) return G('準備：' + g.text, g.f); }
-      const need = new Set(st.menu.filter((m) => m.on && m.kind === 'ramen').flatMap((m) => m.tp)); for (const t of need) if (!(st.prep[t] > 0) && (st.stock[TOPPINGS[t].raw] || 0) > 0) return G(`準備：🔪 まな板で${TOPPINGS[t].name}を仕込もう`, this._fxOf((f, D) => D.board));
+      for (const k of soups) { const g = brothStep(k); if (g) return G('準備：' + g.text, g.f, { ing: g.ing, urgent: g.urgent }); }
+      for (const k of soups) { const g = tareStep(k); if (g) return G('準備：' + g.text, g.f, { ing: g.ing }); }
+      const bd = this._fxOf((f, D) => D.board && f.job); if (bd) return G(`準備：🔪 まな板の${TOPPINGS[bd.job.tid].name}を切ろう（長押し）`, bd);
+      const need = new Set(st.menu.filter((m) => m.on && m.kind === 'ramen').flatMap((m) => m.tp)); for (const t of need) if (!(st.prep[t] > 0) && (st.stock[TOPPINGS[t].raw] || 0) > 0) return G(`準備：🧊 冷蔵庫から${ingShort(TOPPINGS[t].raw)}を取って、まな板で${TOPPINGS[t].name}を仕込もう`, FR(), { ing: TOPPINGS[t].raw });
       if (hd?.t === 'dish') return G('🍜 料理を持っています（受け渡し台に置けます）', this._fxOf((f, D) => D.pass));
       return G('🏮 準備ができたら、入口の札で「営業中」にしよう', this._fxOf((f) => f.t === 'opensign'));
     }
@@ -395,6 +418,7 @@ export class Game {
     if (!o) {
       if (hd?.t === 'dish') return G('🍜 料理を持っています：受け渡し台に置くか、生ゴミ箱へ', this._fxOf((f, D) => D.pass));
       const akuPot = st.fixtures.find((f) => f.pot?.fire && potAku(f.pot, clk) > 0.4); if (akuPot) return G('🥄 寸胴鍋のアクを取ろう（長押し）', akuPot);
+      if (!hd) for (const k of new Set(st.menu.filter((m) => m.on && m.kind === 'ramen').map((m) => m.soup))) { const g0 = brothStep(k); if (g0) return g0; }
       const dirtySeat = st.fixtures.find((f) => (f.dd || []).some((a) => a?.length));
       if (dirtySeat) return G('🍽️ 食べ終わった席の食器を下げよう', dirtySeat);
       const dry = Object.values(st.dry || {}).reduce((a, b) => a + b, 0);
@@ -414,12 +438,12 @@ export class Game {
         if (d.broth && d.broth !== SP.broth) return G(`⚠ だしがちがいます（${m.name}は${BROTHS[SP.broth].short}スープ）：生ゴミ箱へ`, this._fxOf((f) => f.t === 'trash'));
         if (!d.tare) { const g = tareStep(m.soup); return g || G(`🫙 トッピング台で丼に${TARES[SP.tare].short}を入れよう`, this._fxOf(TOP)); }
         if (!d.broth) { const pot = this._fxOf((f, D) => D.pot && f.pot?.b === SP.broth && f.pot.sv > 0); if (!pot) return brothStep(m.soup) || G('🍲 だしを炊こう', this._fxOf(POT)); const B = BROTHS[SP.broth], h = potHeat(pot.pot, clk); return potReady(pot, clk) ? G(`🥣 寸胴鍋で${B.name}を注ごう`, pot) : G(`⏳ だしが炊けるのを待とう（あと${Math.ceil(B.ready - h)}秒）${potAku(pot.pot, clk) > 0.2 ? '・その間にアク取り' : ''}`, pot); }
-        if (d.men == null) { const b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean)); if (b) { const s = Math.max(...b.bk.filter(Boolean).map((x) => clk - x.t0)); return G(s < H.t[0] - DRAIN_HINT ? `♨️ 麺が茹で上がるのを待とう（${H.name}まで あと${Math.ceil(H.t[0] - s)}秒）` : `♨️ 茹で麺機で湯切り！長押しで水を切ろう（${H.name}）`, b); } return G('🍜 茹で麺機に麺を入れよう', this._fxOf((f, D) => D.baskets)); }
+        if (d.men == null) { const b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean)); if (b) { const s = Math.max(...b.bk.filter(Boolean).map((x) => clk - x.t0)); return G(s < H.t[0] - DRAIN_HINT ? `♨️ 麺が茹で上がるのを待とう（${H.name}まで あと${Math.ceil(H.t[0] - s)}秒）` : `♨️ 茹で麺機で湯切り！長押しで水を切ろう（${H.name}）`, b); } return G('🍜 麺を茹でていない！丼を受け渡し台に置いて、冷蔵庫から麺を持ってこよう', this._fxOf((f, D) => D.pass)); }
         const miss = m.tp.filter((x) => !(d.tp || []).includes(x));
-        if (miss.length) { const np = miss.filter((x) => !(st.prep[x] > 0)); if (np.length === miss.length) return G(`🔪 ${TOPPINGS[np[0]].name}の仕込みがありません：まな板で仕込もう`, this._fxOf((f, D) => D.board)); return G(`🥢 トッピング台で ${miss.map((x) => TOPPINGS[x].name).join('・')} をのせよう`, this._fxOf(TOP)); }
+        if (miss.length) { const np = miss.filter((x) => !(st.prep[x] > 0)); if (np.length === miss.length) return G(`🔪 ${TOPPINGS[np[0]].name}の仕込みがありません：冷蔵庫の${ingShort(TOPPINGS[np[0]].raw)}をまな板で仕込もう`, FR(), { ing: TOPPINGS[np[0]].raw }); return G(`🥢 トッピング台で ${miss.map((x) => TOPPINGS[x].name).join('・')} をのせよう`, this._fxOf(TOP)); }
         return serve(who, seat);
       }
-      if (l[0] === 'beer') { if (d.k !== 'mug') return G('🍺 ジョッキが必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'beer' || (d.fill || 0) < 0.85) return G('🍺 ビールサーバーで注ごう（長押し・泡7:3で止める）', this._fxOf((f) => f.t === 'beer')); return serve(who, seat); }
+      if (l[0] === 'beer') { if (d.k !== 'mug') return G('🍺 ジョッキが必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'beer' && !((st.prep.beer || 0) > 0)) return G('🛢️ 樽が空！ジョッキを置いて、冷蔵庫からビール樽を運んでつなごう', this._fxOf((f, D) => D.pass)); if (d.side !== 'beer' || (d.fill || 0) < 0.85) return G('🍺 ビールサーバーで注ごう（長押し・泡7:3で止める）', this._fxOf((f) => f.t === 'beer')); return serve(who, seat); }
       if (l[0] === 'rice' || l[0] === 'chadon') { if (d.k !== 'bowlS') return G('🍚 小丼が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'rice') return G('🍚 炊飯器でごはんをよそおう', this._fxOf((f) => f.t === 'rice')); if (l[0] === 'chadon' && !(d.tp || []).includes('chashu')) return G('🥢 トッピング台でチャーシューをのせよう', this._fxOf(TOP)); return serve(who, seat); }
       if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (d.k !== 'plate') return G('🍽️ 皿が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== l[0]) return G(g?.gr ? `🍽️ ${S.name}を皿に取ろう` : `🔥 先に${S.name}を作ろう`, g); return serve(who, seat); }
       return null;
@@ -428,13 +452,13 @@ export class Game {
       const m = st.menu.find((x) => x.id === l[1]); if (!m) return null;
       const g1 = brothStep(m.soup); if (g1) return g1;
       const g2 = tareStep(m.soup); if (g2) return g2;
-      if (!st.fixtures.some((f) => FIXTURES[f.t].baskets && f.bk.some(Boolean))) return G('🍜 茹で麺機に麺を入れよう', this._fxOf((f, D) => D.baskets));
+      if (!st.fixtures.some((f) => FIXTURES[f.t].baskets && f.bk.some(Boolean))) return (st.stock.men || 0) > 0 ? G('🧊 冷蔵庫から麺を取って、茹で麺機のてぼに入れよう', FR(), { ing: 'men' }) : G('💻 生麺がない！パソコンで仕入れよう', PC());
       if (!((st.dish.bowl || 0) > 0)) return (st.dry?.bowl || 0) > 0 ? G('🍽️ 丼が水切りかごにある！持って食器棚にしまおう', this._fxOf((f, D) => D.sink)) : G('🫧 きれいな丼がない！洗い場で洗おう', this._fxOf((f, D) => D.sink));
       return G('🍜 食器棚でラーメン丼を取ろう', this._fxOf(RACK));
     }
-    if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (g && !g.gr) return G(`🔥 ${FIXTURES[g.t].name}で${S.name}を作ろう`, g); return G('🍽️ 食器棚で皿を取ろう', this._fxOf(RACK)); }
-    if (l[0] === 'rice' || l[0] === 'chadon') { const rc = this._fxOf((f) => f.t === 'rice'); if (rc && !rc.rc) return G('🍚 炊飯器でごはんを炊こう', rc); return G('🍚 食器棚で小丼を取ろう', this._fxOf(RACK)); }
-    if (l[0] === 'beer') return G('🍺 食器棚でジョッキを取ろう', this._fxOf(RACK));
+    if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (g && !g.gr) { const it = GRIDDLE[l[0]].item; return G(`🧊 冷蔵庫から${ingShort(it)}を取って、${FIXTURES[g.t].name}で${S.name}を作ろう`, FR(), { ing: it }); } return G('🍽️ 食器棚で皿を取ろう', this._fxOf(RACK)); }
+    if (l[0] === 'rice' || l[0] === 'chadon') { const rc = this._fxOf((f) => f.t === 'rice'); if (rc && !rc.rc) return G('🧊 冷蔵庫から米を取って、洗い場で研いでから炊飯器で炊こう', FR(), { ing: 'kome' }); return G('🍚 食器棚で小丼を取ろう', this._fxOf(RACK)); }
+    if (l[0] === 'beer') return (st.prep.beer || 0) > 0 ? G('🍺 食器棚でジョッキを取ろう', this._fxOf(RACK)) : G('🧊 冷蔵庫からビール樽を運んで、ビールサーバーにつなごう', FR(), { ing: 'taru' });
     return null;
   }
   _updateGuide(dt) {
@@ -505,6 +529,7 @@ export class Game {
       A.hint = this.dyn?.th && this.dyn.th[5] !== 'down' ? '🥷 泥棒を画面のまん中に入れて投げよう！（2回当てると撃退）' : 'お客さんに当てないように注意';
       return A;
     }
+    if (hd?.t === 'pot' || hd?.t === 'ing') return this._carryActions(t, hd, A);
     if (!t) {
       if (hd?.t === 'dish') { A.info = dishText(hd.d); A.hint = '料理を持って、お客さんの席を狙うと「出す」'; }
       if (hd?.t === 'dirty') { A.info = `🍽️ 下げた食器 ${hd.a.length}/${DIRTY_MAX}`; A.hint = '洗い場に持っていこう'; }
@@ -523,31 +548,33 @@ export class Game {
     const dishInfo = hd?.t === 'dish' ? dishText(hd.d) + '<br>' : hd?.t === 'dirty' ? `🍽️ 下げた食器 ${hd.a.length}/${DIRTY_MAX}<br>` : '';
     // ---- 席 ----
     if (def.seats) return this._seatActions(t, f, t.si, hd, A);
-    // ---- 寸胴鍋：水 → 材料 → 火 → アク取り → 注ぐ ----
+    // ---- 寸胴鍋：（鍋を持って水道で水を張る）→ 冷蔵庫の材料を入れる → 火 → アク取り → 注ぐ ----
     if (def.pot) {
+      if (f.away) { A.info = `🍲 <b>${def.name}</b>：鍋は持ち出し中（${this._who(f.away)}が洗い場で水を張っています）`; A.hint = '鍋がもどってくるのを待とう'; return A; }
       const P = f.pot, ready = potReady(f, clk), heat = potHeat(P, clk), aku = potAku(P, clk), B = P?.b && BROTHS[P.b];
-      const ings = P ? Object.entries(P.n || {}).map(([k, n]) => `${INGREDIENTS[k]?.icon || ''}${INGREDIENTS[k]?.name.split('（')[0]}${n > 1 ? '×' + n : ''}`).join('・') : '';
-      if (!P || !(P.w > 0)) A.info = `🍲 <b>${def.name}</b>：${P?.fire ? '<b style="color:#ff6b6b">⚠ 空焚き中！</b>' : '空っぽ（まず水を入れる）'}`;
-      else if (!B) A.info = `🍲 <b>水</b>${P.fire ? '（🔥沸かしています）' : ''}：だしの材料（鶏ガラ・豚骨・煮干し）と香味野菜を入れよう`;
+      const ings = P ? Object.entries(P.n || {}).map(([k, n]) => `${INGREDIENTS[k]?.icon || ''}${ingShort(k)}${n > 1 ? '×' + n : ''}`).join('・') : '';
+      const cap = def.pot.sv / POT_PER;
+      if (!P || !(P.w > 0)) A.info = `🍲 <b>${def.name}</b>：${P?.fire ? '<b style="color:#ff6b6b">⚠ 空焚き中！</b>' : P?.dirty ? 'だしがらが残った空の鍋（洗い場で洗って水を張る）' : '空の鍋（洗い場の水道で水を張る）'}`;
+      else if (!B) A.info = `🍲 <b>水</b>${P.fire ? '（🔥沸かしています）' : ''}${ings ? '・' + ings : ''}：冷蔵庫から鶏ガラ・豚骨・煮干しを運んで入れよう（${cap}つまで＝${def.pot.sv}杯分）`;
       else A.info = `🍲 <b>${B.name}</b> ${P.sv}/${def.pot.sv}杯・${ings}<br>${ready ? `コク ${Math.round(clamp((heat - B.ready) / (B.rich - B.ready), 0, 1) * 100)}%・品質 ${Math.round(soupQuality(f, clk) * 100)}点` : P.fire ? `炊いています… あと${Math.max(0, Math.ceil(B.ready - heat))}秒` : '火にかけよう'}${aku > 0.05 ? `・<b style="color:#e0a050">アク ${Math.round(aku * 100)}%</b>` : ''}${B.bitter && heat > B.bitter ? '・⚠苦い（炊きすぎ）' : ''}・${P.fire ? '🔥火' : '⚫火が止まっている'}`;
       A.info = dishInfo + A.info;
       if (P?.b) A.gauge = [clamp(heat / B.ready, 0, 1), ready ? '✅' : '🔥', ready ? 'だしができた' : 'だしを炊いています'];
       const skim = { label: '🥄 アクを取る（長押し）', repeat: true, fn: () => { this.act({ t: 'skim', fid: f.id, dur: this.holdDur('skim') }); this.anim = 'stir'; this.animT = 0.3; } };
+      const fireT = { label: P?.fire ? '火を止める' : '火をつける', fn: () => this.act({ t: 'fire', fid: f.id }) };
       if (hd?.t === 'dish' && hd.d.k === 'bowl' && !hd.d.broth) {
         if (ready) A.act = { label: 'スープを注ぐ', icon: '🥣', fn: () => this.act({ t: 'soupPour', fid: f.id }) };
         else A.hint = !P?.b ? 'だしを炊こう（丼を置いてから）' : 'だしが炊けるまで待とう';
         if (!hd.d.tare) A.hint = (A.hint ? A.hint + '　' : '') + '※先にトッピング台でタレ（かえし）を入れておこう';
-      } else if (!hd) {
-        if (!P || !(P.w > 0)) { A.act = { label: '水を入れる', icon: '🚰', fn: () => this.act({ t: 'water', fid: f.id }) }; if (P?.fire) A.alt = { label: '火を止める', fn: () => this.act({ t: 'fire', fid: f.id }) }; A.hint = P?.fire ? '⚠ 空焚き！火を止めよう（火事になる）' : '水を入れて、材料を入れて、火にかけよう'; }
-        else {
-          const canAdd = !(P.used > 0);
-          if (aku > 0.25 && P.b) A.act = skim;
-          else if (canAdd && (!P.b || !P.fire)) A.act = { label: '材料を入れる', icon: '🦴', fn: () => this.ui.openPotPicker(f.id) };
-          else if (aku > 0.05 && P.b) A.act = skim;
-          A.alt = { label: P.fire ? '火を止める' : '火をつける', fn: () => this.act({ t: 'fire', fid: f.id }) };
-          if (canAdd && A.act !== null && A.act?.label !== '材料を入れる' && !P.used) A.box = { label: '材料を足す', icon: '🦴', fn: () => this.ui.openPotPicker(f.id) };
-          else A.box = { label: 'だしを捨てる', icon: '🗑️', fn: async () => { this.setUIBlock(true); const ok = await confirmBox('寸胴鍋のだしを捨てますか？', '捨てる'); this.setUIBlock(false); if (ok) this.act({ t: 'soupDump', fid: f.id }); } };
-          A.hint = !P.b ? '鶏ガラ・豚骨・煮干しなどを入れよう（1つで10杯分）。香味野菜・昆布を足すとおいしくなる' : !P.fire ? '火をつけよう' : aku > 0.25 ? 'アクが出てきた！長押しで取ろう（取らないとにごって味が落ちる）' : ready ? 'タレを入れた丼を持ってくるとスープを注げます' : 'だしが炊けるまで待とう（アクが出たら取る）';
+      } else if (hd && P?.fire && !(P.w > 0)) { A.act = fireT; A.hint = '⚠ 空焚き！火を止めよう（火事になる）'; }
+      else if (!hd) {
+        if (!P || !(P.w > 0)) {
+          if (P?.fire) { A.act = fireT; A.hint = '⚠ 空焚き！火を止めよう（火事になる）'; }
+          else { A.act = { label: '🫕 鍋を持つ', fn: () => this.act({ t: 'potLift', fid: f.id }) }; A.hint = P?.dirty ? '鍋を持って洗い場へ。だしがらを洗って、水を張って戻ってこよう' : '鍋を持って洗い場の水道へ。水を張ってここに戻そう'; }
+        } else {
+          if (aku > 0.05 && P.b) { A.act = skim; A.alt = fireT; }
+          else if (P.b) A.act = fireT; else A.alt = fireT;
+          A.box = { label: 'だしを捨てる', icon: '🗑️', fn: async () => { this.setUIBlock(true); const ok = await confirmBox('寸胴鍋の中身を捨てますか？（鍋は洗い場で洗ってから使おう）', '捨てる'); this.setUIBlock(false); if (ok) this.act({ t: 'soupDump', fid: f.id }); } };
+          A.hint = !P.b ? `冷蔵庫から鶏ガラなどを持ってきて入れよう（1つで${POT_PER}杯分）。香味野菜・昆布を足すとおいしくなる` : !P.fire ? '火をつけよう' : aku > 0.25 ? 'アクが出てきた！長押しで取ろう（取らないとにごって味が落ちる）' : ready ? 'タレを入れた丼を持ってくるとスープを注げます' : 'だしが炊けるまで待とう（アクが出たら取る）';
         }
       }
       return A;
@@ -569,10 +596,8 @@ export class Game {
           } else A.hint = 'そのてぼは空です（麺が入ったてぼを狙おう）';
         }
       }
-      const free = f.bk.some((x) => !x);
-      if (!b || (free && !A.act)) { const put = { label: '麺を入れる', icon: '🍜', fn: () => this.act({ t: 'noodleIn', fid: f.id, bi: b ? -1 : bi }) }; if (!A.act) A.act = put; else if (!b) A.alt = put; }
       if (b && !hd) A.alt = { label: `${bi + 1}番の麺を捨てる`, fn: () => this.act({ t: 'noodleDump', fid: f.id, bi }) };
-      if (!A.hint) A.hint = `生麺 ${st.stock.men || 0}玉。てぼに麺を入れて、丼にスープを注いでから湯切り`;
+      if (!A.hint) A.hint = `生麺は冷蔵庫に${st.stock.men || 0}玉。冷蔵庫から麺を持ってきててぼに入れ、丼にスープを注いでから湯切り`;
       return A;
     }
     // ---- トッピング台 ----
@@ -589,24 +614,22 @@ export class Game {
         A.hint = want ? `「${want.name}」は ${soupRecipe(want.soup)}。丼にタレ（かえし）を先に入れよう` : '丼にタレ（かえし）を先に入れて、寸胴鍋でだしを注ごう';
         return A;
       }
-      if (!hd && !f.tj) A.alt = { label: 'タレを作る', icon: '🫙', fn: () => this.ui.openTarePicker(f.id, 'make') };
       const ok = hd?.t === 'dish' && ((hd.d.k === 'bowl' && hd.d.broth) || (hd.d.k === 'bowlS' && hd.d.side === 'rice'));
       if (ok) {
         A.act = { label: 'トッピング', icon: '🥢', fn: () => this.ui.openToppingPicker(f.id) };
         const target = this.targetRecipe(hd.d);
         if (target?.miss?.length) A.alt = { label: `注文どおり（${target.name}）`, fn: () => { for (const tid of target.miss) this.act({ t: 'top', fid: f.id, tid }); } };
         A.hint = target ? `「${target.name}」には ${target.tp.map((x) => TOPPINGS[x]?.icon + TOPPINGS[x]?.name).join('・')}` : '';
-      } else A.hint = hd ? (hd.t === 'dish' && hd.d.k === 'bowl' ? '寸胴鍋でだしを注いでからトッピングしよう' : 'スープを入れた丼（またはライス）を持ってこよう') : 'タレ（かえし）は材料から作る。トッピングはまな板で仕込む';
+      } else A.hint = hd ? (hd.t === 'dish' && hd.d.k === 'bowl' ? '寸胴鍋でだしを注いでからトッピングしよう' : 'スープを入れた丼（またはライス）を持ってこよう') : 'タレ（かえし）は冷蔵庫から醤油などを運んできて、ここで混ぜて作る。トッピングはまな板で仕込む';
       return A;
     }
     // ---- まな板 ----
     if (def.board) {
       const J = f.job;
       A.info = dishInfo + (J ? `🔪 <b>${TOPPINGS[J.tid].icon}${TOPPINGS[J.tid].name}</b>を仕込み中 ${Math.round(J.p * 100)}%` : `🔪 <b>まな板</b>：冷蔵庫の食材を切ってトッピングを仕込む`);
-      if (hd) { A.hint = '手を空けてから仕込もう'; return A; }
-      if (J) { A.act = { label: '🔪 切る（長押し）', repeat: true, fn: () => { this.act({ t: 'chop', fid: f.id, dur: this.holdDur('chop') }); this.anim = 'chop'; this.animT = 0.3; } }; A.alt = { label: 'やめる', fn: () => this.act({ t: 'chopCancel', fid: f.id }) }; }
-      else A.act = { label: '仕込む', icon: '🔪', fn: () => this.ui.openPrepPicker(f.id) };
-      A.hint = J ? '長押しで切る' : 'トッピングを選んで、長押しで切ろう';
+      if (hd) { A.hint = '手を空けてから切ろう'; return A; }
+      if (J) { A.act = { label: '🔪 切る（長押し）', repeat: true, fn: () => { this.act({ t: 'chop', fid: f.id, dur: this.holdDur('chop') }); this.anim = 'chop'; this.animT = 0.3; } }; if (J.p <= 0.05) A.alt = { label: '食材を手に戻す', fn: () => this.act({ t: 'chopCancel', fid: f.id }) }; }
+      A.hint = J ? '長押しで切る（切った物はトッピング台に並ぶ）' : '冷蔵庫から食材（長ねぎ・豚バラ肉・メンマなど）を持ってきて、まな板にのせよう';
       return A;
     }
     // ---- 食器棚 ----
@@ -639,8 +662,12 @@ export class Game {
     // ---- 冷蔵庫 ----
     if (def.cap) {
       A.info = dishInfo + `🧊 <b>${def.name}</b>：${fridgeUsed(st)}/${fridgeCap(st)}パック`;
-      A.act = { label: '在庫を見る', icon: '📋', fn: () => this.ui.openStock() };
-      A.hint = '食材はパソコンで仕入れると、ドローンでここに届きます';
+      if (!hd) {
+        const want = this._guideNow?.ing, C = want && carryInfo(want);
+        if (C && ingUnlocked(want, st.level) && (st.stock[want] || 0) >= C.take) { A.act = { label: `${ingShort(want)}を取る`, icon: INGREDIENTS[want].icon, fn: () => this.act({ t: 'ingTake', fid: f.id, k: want }) }; A.alt = { label: 'ほかの食材を取る', fn: () => this.ui.openFridgePicker(f.id) }; }
+        else { A.act = { label: '食材を取る', icon: '🧊', fn: () => this.ui.openFridgePicker(f.id) }; A.alt = { label: '在庫を見る', fn: () => this.ui.openStock() }; }
+      }
+      A.hint = '食材は手に持って、使う設備まで運ぼう（仕入れはパソコン・ドローンでここに届く）';
       return A;
     }
     // ---- 炊飯器 ----
@@ -648,7 +675,7 @@ export class Game {
       const rc = f.rc, ready = rc && clk - rc.t0 >= RICE_READY;
       A.info = dishInfo + `🍚 <b>炊飯器</b>：${!rc ? '空っぽ' : ready ? `炊けています ${rc.sv}杯` : `炊いています… あと${Math.ceil(RICE_READY - (clk - rc.t0))}秒`}`;
       if (hd?.t === 'dish' && hd.d.k === 'bowlS' && !hd.d.side && ready) A.act = { label: 'ライスをよそう', icon: '🍚', fn: () => this.act({ t: 'riceServe', fid: f.id }) };
-      else if (!hd && !rc) A.act = { label: `米を炊く（米 ${st.stock.kome || 0}袋）`, fn: () => this.act({ t: 'riceStart', fid: f.id }) };
+      else if (!hd && !rc) A.hint = `冷蔵庫の米（${st.stock.kome || 0}袋）を持って、洗い場で研いでからここへ`;
       else if (!hd && ready) A.hint = '小丼を持ってくるとよそえます';
       return A;
     }
@@ -658,15 +685,15 @@ export class Game {
       const stage = !gr ? '空' : sec < G.ideal[0] ? `焼いています ${sec.toFixed(0)}秒` : sec <= G.ideal[1] ? `<b style="color:#4ade80">ちょうどいい！ ${sec.toFixed(0)}秒</b>` : sec <= G.burn ? `<b style="color:#fbbf24">焼きすぎ ${sec.toFixed(0)}秒</b>` : `<b style="color:#ff6b81">焦げてる！ ${sec.toFixed(0)}秒</b>`;
       A.info = dishInfo + `${SIDES[def.griddle].icon} <b>${def.name}</b>：${stage}<br><small>ちょうどいいのは ${G.ideal[0]}〜${G.ideal[1]}秒</small>`;
       if (gr && hd?.t === 'dish' && hd.d.k === 'plate' && !hd.d.side) A.act = { label: '皿に盛る', icon: '🍽️', fn: () => this.act({ t: 'grillTake', fid: f.id }) };
-      else if (!gr && !hd) A.act = { label: `${G.name}を${def.griddle === 'gyoza' ? '焼く' : '揚げる'}`, fn: () => this.act({ t: 'grillStart', fid: f.id }) };
+      else if (!gr && !hd) A.hint = `冷蔵庫から${ingShort(G.item)}（${G.use}個）を持ってこよう（在庫 ${st.stock[G.item] || 0}個）`;
       else if (gr) A.hint = '空の皿を持ってきて盛ろう（食器棚の「ほかの器」）';
       return A;
     }
     // ---- ビールサーバー ----
     if (def.beer) {
-      A.info = dishInfo + `🍺 <b>ビールサーバー</b>：のこり ${st.prep.beer || 0}杯＋樽 ${st.stock.taru || 0}`;
-      if (hd?.t === 'dish' && hd.d.k === 'mug') { A.act = { label: '🍺 注ぐ（長押し）', repeat: true, fn: () => this.act({ t: 'pour', fid: f.id, dur: this.holdDur('pour') }) }; A.hint = '泡が7:3くらい（93%）で止めるとおいしい。あふれさせないで！'; }
-      else A.hint = 'ジョッキを持ってこよう（食器棚の「ほかの器」）';
+      A.info = dishInfo + `🍺 <b>ビールサーバー</b>：つないだ樽 のこり ${st.prep.beer || 0}杯（冷蔵庫に樽 ${st.stock.taru || 0}）`;
+      if (hd?.t === 'dish' && hd.d.k === 'mug') { A.act = { label: '🍺 注ぐ（長押し）', repeat: true, fn: () => this.act({ t: 'pour', fid: f.id, dur: this.holdDur('pour') }) }; A.hint = (st.prep.beer || 0) > 0 || hd.d.side === 'beer' ? '泡が7:3くらい（93%）で止めるとおいしい。あふれさせないで！' : '樽が空です。冷蔵庫からビール樽を運んでつなごう'; }
+      else A.hint = (st.prep.beer || 0) > 0 ? 'ジョッキを持ってこよう（食器棚の「ほかの器」）' : '樽が空です。冷蔵庫からビール樽を運んでつなごう';
       return A;
     }
     // ---- 受け渡し台 ----
@@ -711,6 +738,75 @@ export class Game {
     if (def.text) { A.act = { label: '文字を編集', fn: () => this.ui.openText(f.id) }; A.info = `${def.icon} ${def.name}`; return A; }
     if (def.turret) { A.info = '🛡️ <b>警備タレット</b>：近づいた泥棒に自動で手裏剣を撃つ'; return A; }
     A.info = `${def.icon} ${def.name}`;
+    return A;
+  }
+  _who(uid) { if (uid === this.me) return 'あなた'; if (String(uid).startsWith('s:')) { const s = this.store.staff.find((o) => 's:' + o.id === uid); return s ? `アルバイトの${s.name}さん` : 'アルバイト'; } return (this.players[uid]?.n || '仲間') + 'さん'; }
+  // 手に持っている鍋・食材で、狙っている設備にできること
+  _carryActions(t, hd, A) {
+    const st = this.store, f = t?.type === 'fixture' ? t.f : null, def = f && FIXTURES[f.t];
+    if (hd.t === 'pot') {
+      const nm = hd.ft === 'pot2' ? '大寸胴鍋' : '寸胴鍋';
+      A.info = `🫕 <b>${nm}</b>を持っています（${hd.dirty ? 'だしがらが残っている' : hd.w >= 1 ? '水いっぱい・重い！' : hd.w > 0 ? `水 ${Math.round(hd.w * 100)}%` : '空っぽ'}）`;
+      if (def?.sink && !f.br) {
+        const fill = (anim) => ({ repeat: true, fn: () => { this.act({ t: 'potFill', fid: f.id, dur: this.holdDur('potFill') }); this.anim = anim; this.animT = 0.3; } });
+        if (hd.dirty) { A.act = { label: '🧽 鍋を洗う（長押し）', ...fill('wash') }; A.gauge = [hd.cl || 0, '🧽', 'だしがらを捨てて洗っています']; A.hint = '使い終わった鍋は、だしがらを捨てて洗ってから水を張ろう'; }
+        else if (hd.w < 1) { A.act = { label: '🚰 水を入れる（長押し）', ...fill('wash') }; A.gauge = [hd.w, '🚰', `水 ${Math.round(hd.w * 100)}%`]; A.hint = '蛇口から水を張ろう（満タンまで長押し）'; }
+        else A.hint = '水がいっぱい！コンロに戻そう（重いので走れません）';
+      } else if (def?.pot) {
+        if (f.id !== hd.fid) A.hint = 'この鍋は別のコンロのものです';
+        else if (hd.w > 0 && hd.w < 1) A.hint = '水が少なすぎます。洗い場で満タンにしよう';
+        else { A.act = { label: hd.w >= 1 ? '🍲 コンロにのせる' : '鍋をコンロに戻す', fn: () => this.act({ t: 'potSet', fid: f.id }) }; A.hint = hd.w >= 1 ? 'のせたら、冷蔵庫から鶏ガラなどを運んで入れよう' : '水を張らずに戻します'; }
+      } else A.hint = hd.dirty || hd.w < 1 ? '🚰 洗い場の水道へ持っていこう' : '🍲 コンロに戻そう（重いので走れません）';
+      return A;
+    }
+    const I = INGREDIENTS[hd.k], C = carryInfo(hd.k), nm = ingShort(hd.k);
+    if (!I) return A;
+    const ws = hd.k === 'kome' ? ((hd.ws || 0) >= 1 ? '（研いだ米）' : hd.ws ? `（研いでいます ${Math.round(hd.ws * 100)}%）` : '（まだ研いでいない）') : '';
+    A.info = `${I.icon} <b>${nm}</b> ×${hd.n}${C?.unit || ''}${ws} を持っています`;
+    if (def?.cap && !f.br) {
+      const more = C && hd.n < C.max && (st.stock[hd.k] || 0) >= C.take;
+      const back = { label: '冷蔵庫に戻す', fn: () => this.act({ t: 'ingBack', fid: f.id }) };
+      if (more) { A.act = { label: `もう${C.take}${C.unit}取る（${hd.n}→${hd.n + C.take}）`, icon: I.icon, fn: () => this.act({ t: 'ingTake', fid: f.id, k: hd.k }) }; A.alt = back; }
+      else A.act = back;
+      A.hint = `${C?.to || ''}へ持っていこう`;
+      return A;
+    }
+    if (f && !f.br && ingFits(hd.k, def, hd)) {
+      if (def.pot) {
+        const P = f.pot;
+        if (f.away) A.hint = '鍋がコンロにのっていません';
+        else if (!(P?.w > 0)) A.hint = '先に鍋を洗い場に持っていって、水を張ってこよう';
+        else if (P.used > 0) A.hint = '使いはじめた鍋には足せません（空になったら炊き直そう）';
+        else { A.act = { label: `${nm}を鍋に入れる`, icon: I.icon, fn: () => this.act({ t: 'potAdd', fid: f.id }) }; A.hint = I.broth ? `1つで${POT_PER}杯分（この鍋は${FIXTURES[f.t].pot.sv / POT_PER}つまで）。入れたら火をつけよう` : '香りとうま味が出て、だしがおいしくなる'; }
+        if (P?.w > 0) A.info += `<br>🍲 鍋の中：${Object.entries(P.n || {}).map(([k, n]) => `${INGREDIENTS[k]?.icon}${ingShort(k)}×${n}`).join('・') || '水だけ'}`;
+      } else if (def.baskets) {
+        const bi = t.bi != null && !f.bk[t.bi] ? t.bi : f.bk.findIndex((x) => !x);
+        if (bi < 0) A.hint = 'てぼがいっぱいです（空くのを待とう）';
+        else { A.act = { label: `${bi + 1}番のてぼに麺を入れる`, icon: '🍜', fn: () => this.act({ t: 'noodleIn', fid: f.id, bi }) }; const [bx, bz] = basketPos(f.t, bi); A.slot = [f.id, { x: bx, y: 0.86, z: bz, w: 0.2, h: 0.12, d: 0.2 }]; A.hint = '入れた瞬間から茹で時間が始まります（かため15秒〜）'; }
+      } else if (def.topping) {
+        if (f.tj) A.hint = 'いまタレを作っています（混ぜ終わってから）';
+        else { const T = TARES[I.tare]; A.act = { label: `${T.short}を作る`, icon: '🫙', fn: () => this.act({ t: 'tareStart', fid: f.id }) }; A.hint = `ボウルにあけたら、手を空けて長押しで混ぜよう（${T.per}杯分）`; }
+      } else if (def.board) {
+        if (f.job) A.hint = 'まな板の上の食材を先に切ってしまおう';
+        else { A.act = { label: 'まな板にのせる', icon: '🔪', fn: () => this.act({ t: 'boardPut', fid: f.id }) }; A.hint = 'のせたら長押しで切ろう'; }
+      } else if (def.sink) {
+        A.act = { label: '🍚 米を研ぐ（長押し）', repeat: true, fn: () => { this.act({ t: 'riceWash', fid: f.id, dur: this.holdDur('riceWash') }); this.anim = 'wash'; this.animT = 0.3; } };
+        A.gauge = [hd.ws || 0, '🍚', `米を研いでいます ${Math.round((hd.ws || 0) * 100)}%`]; A.hint = '水を替えながら研ぐと、ふっくら炊ける';
+      } else if (def.rice) {
+        if (f.rc && f.rc.sv > 0) A.hint = 'まだごはんが残っています';
+        else { A.act = { label: '炊飯器に入れて炊く', icon: '🍚', fn: () => this.act({ t: 'riceStart', fid: f.id }) }; }
+      } else if (def.griddle) {
+        const G = GRIDDLE[def.griddle];
+        if (f.gr) A.hint = 'いま焼いています';
+        else if (hd.n < G.use) A.hint = `${G.use}個いります（冷蔵庫でもう少し取ろう）`;
+        else A.act = { label: `${G.name}を${def.griddle === 'gyoza' ? '焼く' : '揚げる'}`, icon: SIDES[def.griddle].icon, fn: () => this.act({ t: 'grillStart', fid: f.id }) };
+      } else if (def.beer) {
+        if ((st.prep.beer || 0) > 0) A.hint = `まだ樽に${st.prep.beer}杯分残っています`;
+        else A.act = { label: '樽をつなぐ', icon: '🛢️', fn: () => this.act({ t: 'kegSet', fid: f.id }) };
+      }
+      return A;
+    }
+    A.hint = hd.k === 'kome' && (hd.ws || 0) < 1 ? '🚰 洗い場で米を研ごう' : `${nm}は${C?.to || '使う設備'}へ持っていこう`;
     return A;
   }
   // 席：料理を出す・食器を下げる
@@ -925,11 +1021,11 @@ export class Game {
     }
     if (d.th) list.push({ key: 'thief:' + d.th[6], kind: 'thief', av: THIEF_AV, x: d.th[0], z: d.th[1], ry: d.th[2], an: d.th[3], bubble: d.th[4] || null, small: true });
     // 賭場の壺振りと胴元
-    list.push({ key: 'npc:dealer', kind: 'npc', av: DEALER_AV, x: 13, z: -0.75, ry: 0, an: d.ch?.ph === 'roll' ? 'zstir' : 'zsit', y: 0.05, small: true });
+    list.push({ key: 'npc:dealer', kind: 'npc', av: DEALER_AV, x: 13, z: -0.75, ry: 0, an: d.ch?.ph === 'shake' ? 'zstir' : 'zsit', y: 0.05, small: true });
     if (st.level >= GAMBLES.chinchiro.lv) list.push({ key: 'npc:oya', kind: 'npc', av: { ...DEALER_AV, hat: 'none', acc: 'sun' }, x: 10.6, z: -2.65, ry: 0, an: 'zsit', y: 0.05, small: true });
     for (const e of list) if (e.seedAv) e.av = this.app.avatarFromSeed(e.av, e.kind);
     // 持っている料理・食器が設備や壁にめりこまないよう、前がつまっていたら体に引き寄せる
-    for (const e of list) if (e.hand && e.hand.t !== 'ext' && e.hand.t !== 'shuri') { const free = this._ahead(e.x, e.z, e.ry || 0, (e.y || 0) + 0.9, 0.56); e.hz = clamp(free - 0.18, 0.14, 0.34); }
+    for (const e of list) if (e.hand && e.hand.t !== 'ext' && e.hand.t !== 'shuri') { if (e.hand.t === 'pot') { e.hz = 0.4; continue; } const free = this._ahead(e.x, e.z, e.ry || 0, (e.y || 0) + 0.9, 0.56); e.hz = clamp(free - 0.18, 0.14, 0.34); }
     for (const k of Object.keys(this.chat)) { this.chat[k].t -= dt; if (this.chat[k].t <= 0) delete this.chat[k]; }
     R.syncChars(list, dt);
     const holders = (who) => R.getChar(who === this.me ? 'me' : 'p:' + who);
@@ -950,17 +1046,18 @@ export class Game {
       ['📋', '注文は画面の左の「注文票」に出ます（Cキー／📋ボタンで開け閉め）。タップすると、その注文を選べます'],
       ['👉', '画面の上の「次」に、いまやることが出ます。黄色い矢印の設備へ行こう（画面の外なら、はしの矢印が向きを教えてくれます）。注文票をタップすると、その注文の手順に切りかわります'],
       ['🎯', '設備をまん中で狙わなくても、目の前の近くの設備が自動で選ばれます（狙いアシスト）。スマホは画面の設備を直接タップしても使えます。設定でオフにできます'],
-      ['🍜', 'ラーメンの作り方：①食器棚で「丼を取る」→ ②トッピング台で「タレ（かえし）を入れる」→ ③寸胴鍋で「だしを注ぐ」→ ④茹で麺機で「湯切り」（長押しで水を切る）→ ⑤トッピングをのせる → ⑥お客さんに出す（カウンター越しでもOK）。麺は先に茹で麺機へ入れておこう'],
+      ['🧊', '食材はぜんぶ手で運びます。冷蔵庫で食材を取って（同じ物なら何個か重ねて持てる）、使う設備まで持っていこう。生麺は茹で麺機、鶏ガラ・豚骨・香味野菜は寸胴鍋、醤油などはトッピング台、長ねぎ・豚バラ肉などはまな板、米は洗い場で研いでから炊飯器、冷凍餃子は餃子焼き器、ビール樽はビールサーバーへ'],
+      ['🍜', 'ラーメンの作り方：①冷蔵庫から生麺を持ってきて、茹で麺機のてぼに入れる（入れた瞬間から茹で時間が始まる）→ ②食器棚で「丼を取る」→ ③トッピング台で「タレ（かえし）を入れる」→ ④寸胴鍋で「だしを注ぐ」→ ⑤茹で麺機で「湯切り」（長押しで水を切る）→ ⑥トッピングをのせる → ⑦お客さんに出す（カウンター越しでもOK）'],
       ['⏱️', '麺は茹でた秒数でかたさが決まる（かため15〜21秒・ふつう21〜27秒・やわらかめ27〜33秒）。湯切りの長押しにも1秒ほどかかるので少し早めに。湯切りが足りないと水っぽくなって点数が下がる'],
-      ['🍲', 'だしは寸胴鍋で一から炊く：①「水を入れる」→ ②鶏ガラ・豚骨・煮干しなどを入れる（1つで10杯分。香味野菜・昆布を足すとおいしくなる）→ ③火をつける → ④出てきたアクを長押しで取る。鶏ガラ30秒・豚骨50秒・煮干し25秒で使える。空になったら火を止めて炊き直し（空焚きは火事のもと）'],
-      ['🫙', 'タレ（かえし）はトッピング台で材料から作る（醤油・塩・味噌・ごま・たまり醤油を出して長押しで混ぜる）。スープの味は「だし＋タレ」の組み合わせで決まる（例：醤油＝鶏ガラ＋醤油ダレ、家系＝豚骨＋醤油ダレ）'],
-      ['🔪', 'トッピングはまな板で仕込む（長押しで切る）。食材はパソコンで仕入れると、ドローンが勝手口に飛んできて冷蔵庫に直接入れてくれます（倉庫はありません）'],
+      ['🍲', 'だしは寸胴鍋で一から炊く：①空の鍋を「持つ」→ ②洗い場の水道で長押しして水を張る（使い終わった鍋は先にだしがらを捨てて洗う）→ ③重くなった鍋を持ってコンロに戻す（水が入った鍋は重くて走れない）→ ④冷蔵庫から鶏ガラ・豚骨・煮干しを運んで入れる（1つで10杯分。香味野菜・昆布も入れるとおいしい）→ ⑤火をつける → ⑥出てきたアクを長押しで取る。鶏ガラ30秒・豚骨50秒・煮干し25秒で使える。空になったら火を止めて炊き直し（空焚きは火事のもと・火がついたままの鍋は持てない）'],
+      ['🫙', 'タレ（かえし）は、冷蔵庫から醤油の一升瓶などを持ってきて、トッピング台のボウルにあけ、長押しで混ぜて作る。スープの味は「だし＋タレ」の組み合わせで決まる（例：醤油＝鶏ガラ＋醤油ダレ、家系＝豚骨＋醤油ダレ）'],
+      ['🔪', 'トッピングは、冷蔵庫から食材（長ねぎ・豚バラ肉・メンマなど）を持ってきてまな板にのせ、手を空けて長押しで切る。切った物はトッピング台に並ぶ。食材はパソコンで仕入れると、ドローンが勝手口に飛んできて冷蔵庫に直接入れてくれます（倉庫はありません）'],
       ['🍽️', 'お客さんが帰ったら席の食器を下げて（5個まで重ねて持てる）、洗い場のシンクに入れる（遠くから投げ入れもできるけど、割れたりお客さんに当たったりする）。スポンジで1つずつ洗う（長押し）→ 水切りかごに並ぶ → 持って食器棚にしまう'],
       ['🥟', 'レベルが上がると、ライス・餃子・生ビール・チャーシュー丼・唐揚げなどのサイドメニュー、新しいスープとトッピングが使えるようになります。パソコンの「メニュー」でオリジナルラーメンを作ろう'],
       ['🥷', '泥棒はレジのお金を狙ってくる。手裏剣ケースで手裏剣を持って投げよう（2回当てると捕まえて懸賞金）。アルバイトの役割を「🛡️警備」にすると、その人が手裏剣を投げたり取り押さえたりしてくれる。レジのお金はときどき「金庫にしまう」と安心'],
       ['🔥', '焦がした餃子・唐揚げや空焚きの鍋から火が出ることがある。消火器を持って火に向けて長押し！放っておくと設備が壊れて、お客さんも逃げてしまう'],
       ['🕶️', 'ときどきサングラスのラーメン評論家が来る。80点以上の一杯を出すと評判が大きく上がって賞金も！'],
-      ['🎲', 'となりの「賭場」で丁半博打（Lv.8 チンチロリン・Lv.12 スロット）。賭けるには、お店のレジを開けてお金をつかみ、賭場の台で「お金をセット」する。勝ったお金は手持ちになるので、レジに戻そう'],
+      ['🎲', 'となりの「賭場」で丁半博打（Lv.8 チンチロリン・Lv.12 スロット）。賭けるには、お店のレジを開けてお金をつかみ、賭場の台で「お金をセット」する。丁半は壺が開くまでドキドキ、チンチロは自分で振る、スロットは自分でSTOP（リーチ・ジャックポットあり）。勝ったお金は手持ちになるので、レジに戻そう'],
       ['🧑‍🍳', 'Lv.3 からアルバイトを雇える（パソコン）。調理・接客・洗い場・おまかせ の仕事をまかせられる'],
       ['👥', 'ルームを作ると最大4人で一緒にお店を回せます。麺茹で・盛り付け・配膳・洗い物を分担しよう'],
       ['🔨', '建築ボタン（B）でテーブル席・厨房機器・装飾を置ける。置いてある設備は狙って「🔧動かす」（F）'], ['🎥', 'Vキー／設定で一人称と三人称を切り替え'],

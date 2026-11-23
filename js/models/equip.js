@@ -197,7 +197,20 @@ export function sinkModel() {
 }
 
 // ================= 寸胴鍋とスープレンジ（低いガス台・五徳・バーナー・ガス管） =================
-export function stoveModel(def, A) {
+// 寸胴鍋だけ（持ち運ぶとき・コンロにのせるとき共通）。y0＝鍋の底の高さ
+export function stockPotMesh(A, y0 = 0, ladle = false) {
+  const g = new THREE.Group(), r = A.r, h = A.h, py0 = y0, pot = mat(0xdde1e4, { r: 0.22, m: 0.85, side: THREE.DoubleSide });
+  add(g, T(lathe([[0, 0], [r - 0.015, 0], [r, 0.015], [r, h - 0.016], [r + 0.006, h - 0.006], [r + 0.004, h + 0.002], [r - 0.006, h], [r - 0.008, h - 0.012], [r - 0.008, 0.02], [r - 0.022, 0.009], [0, 0.009]], 36), 0, py0), pot);
+  add(g, T(torus(r + 0.002, 0.006, 6, 36), 0, py0 + 0.03, 0, Math.PI / 2), C(0xc9ced3, { r: 0.3, m: 0.8 }));
+  for (const s of [-1, 1]) {
+    add(g, T(box(0.012, 0.05, 0.08), s * (r + 0.004), py0 + h - 0.1, 0), CHROME());
+    add(g, T(torus(0.045, 0.009, 6, 14, Math.PI), s * (r + 0.01), py0 + h - 0.075, 0, Math.PI / 2, 0, s > 0 ? -Math.PI / 2 : Math.PI / 2), CHROME());
+  }
+  // おたま（鍋のふちに掛けて）
+  if (ladle) add(g, tube([[r * 0.35, py0 + h * 0.45, 0.06], [r - 0.02, py0 + h + 0.02, 0.08], [r + 0.02, py0 + h + 0.12, 0.1], [r + 0.04, py0 + h + 0.28, 0.12], [r + 0.02, py0 + h + 0.31, 0.12]], 0.006, 16, 6), CHROME());
+  return g;
+}
+export function stoveModel(def, A, opts = {}) {
   const g = new THREE.Group(), W = def.w, D = def.d, TY = 0.4;
   // 角パイプの脚と枠
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) { add(g, T(box(0.04, TY - 0.03, 0.04), sx * (W / 2 - 0.03), 0.015, sz * (D / 2 - 0.03)), STEEL()); add(g, T(box(0.05, 0.015, 0.05), sx * (W / 2 - 0.03), 0, sz * (D / 2 - 0.03)), RUBBER()); }
@@ -227,16 +240,8 @@ export function stoveModel(def, A) {
   add(g, T(cyl(0.02, 0.02, 0.05, 12), 0.13, py - 0.01, D / 2 - 0.05, Math.PI / 2), C(0x1c1d20, { r: 0.35 }));
   add(g, rod([0.13, py, pz], [0.13, py, D / 2 - 0.05], 0.008, 6), brass);
   add(g, tube([[-W / 2 + 0.04, py, pz], [-W / 2 + 0.03, py - 0.08, pz - 0.05], [-W / 2 + 0.04, 0.05, 0.0], [-W / 2 + 0.05, 0.02, -D / 2 + 0.05]], 0.014, 20, 8), C(0xf28c28, { r: 0.6 }));
-  // 寸胴鍋（ふちを巻いた厚みのある鍋）
-  const r = A.r, h = A.h, py0 = A.y - 0.05, pot = mat(0xdde1e4, { r: 0.22, m: 0.85, side: THREE.DoubleSide });
-  add(g, T(lathe([[0, 0], [r - 0.015, 0], [r, 0.015], [r, h - 0.016], [r + 0.006, h - 0.006], [r + 0.004, h + 0.002], [r - 0.006, h], [r - 0.008, h - 0.012], [r - 0.008, 0.02], [r - 0.022, 0.009], [0, 0.009]], 36), 0, py0), pot);
-  add(g, T(torus(r + 0.002, 0.006, 6, 36), 0, py0 + 0.03, 0, Math.PI / 2), C(0xc9ced3, { r: 0.3, m: 0.8 }));
-  for (const s of [-1, 1]) {
-    add(g, T(box(0.012, 0.05, 0.08), s * (r + 0.004), py0 + h - 0.1, 0), CHROME());
-    add(g, T(torus(0.045, 0.009, 6, 14, Math.PI), s * (r + 0.01), py0 + h - 0.075, 0, Math.PI / 2, 0, s > 0 ? -Math.PI / 2 : Math.PI / 2), CHROME());
-  }
-  // おたま（鍋のふちに掛けて）
-  add(g, tube([[r * 0.35, py0 + h * 0.45, 0.06], [r - 0.02, py0 + h + 0.02, 0.08], [r + 0.02, py0 + h + 0.12, 0.1], [r + 0.04, py0 + h + 0.28, 0.12], [r + 0.02, py0 + h + 0.31, 0.12]], 0.006, 16, 6), CHROME());
+  // 寸胴鍋（ふちを巻いた厚みのある鍋）。持ち出しているときはコンロだけ
+  if (opts.pot !== false) g.add(stockPotMesh(A, A.y - 0.05, true));
   return g;
 }
 

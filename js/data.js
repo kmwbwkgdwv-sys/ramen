@@ -176,6 +176,39 @@ export const DRAIN_T = 1.1; // 湯切りの長押しの秒数
 export const CASH_CHOICES = [1000, 3000, 5000, 10000, 30000, 100000];
 export const FLOAT_CASH = 10000; // 朝のレジに入れておく釣り銭
 export const DIRTY_MAX = 5; // 下げた食器を重ねて持てる数
+// ---------- 手で運ぶ工程 ----------
+// 寸胴鍋：空の鍋をコンロから持ち上げ → 洗い場の水道で（汚れていれば洗ってから）水を張る → コンロに戻す
+export const POT_FILL_T = { pot: 3.2, pot2: 4.8 }; // 水を満タンにする長押しの秒数（鍋の大きさで変わる）
+export const POT_RINSE_T = 1.8;  // 使い終わった鍋（だしがら）を洗う長押しの秒数
+export const RICE_WASH_T = 2.6;  // 米を研ぐ長押しの秒数
+export const CARRY_SPEED = { pot: 0.82, potFull: 0.5 }; // 鍋を持っているときの歩く速さ（水が入ると重い）
+// 冷蔵庫から手で運ぶ食材：take＝1回で取る量、max＝重ねて持てる量、to＝持っていく所
+export function carryInfo(id) {
+  const p = INGREDIENTS[id]; if (!p || p.dish) return null;
+  if (id === 'men') return { take: 1, max: 6, to: '茹で麺機', unit: '玉' };
+  if (p.cat === 'soup') return { take: 1, max: p.broth ? 4 : 2, to: '寸胴鍋', unit: p.unit };
+  if (p.cat === 'tare') return { take: 1, max: 1, to: 'トッピング台（タレ作り）', unit: p.unit };
+  if (p.cat === 'top') return { take: 1, max: 1, to: 'まな板', unit: p.unit };
+  if (id === 'kome') return { take: 1, max: 1, to: '洗い場で研いで → 炊飯器', unit: p.unit };
+  if (id === 'gyozaF') return { take: 6, max: 6, to: '餃子焼き器', unit: '個' };
+  if (id === 'chicken') return { take: 4, max: 4, to: 'フライヤー', unit: '個' };
+  if (id === 'taru') return { take: 1, max: 1, to: 'ビールサーバー', unit: '樽' };
+  return null;
+}
+// 持っている食材を使う設備か（kome は研ぐ前＝洗い場、研いだ後＝炊飯器）
+export function ingFits(id, def, hd) {
+  const p = INGREDIENTS[id]; if (!p || !def) return false;
+  if (id === 'men') return !!def.baskets;
+  if (p.cat === 'soup') return !!def.pot;
+  if (p.cat === 'tare') return !!def.topping;
+  if (p.cat === 'top') return !!def.board;
+  if (id === 'kome') return (hd?.ws || 0) >= 1 ? !!def.rice : !!def.sink;
+  if (id === 'gyozaF') return def.griddle === 'gyoza';
+  if (id === 'chicken') return def.griddle === 'karaage';
+  if (id === 'taru') return !!def.beer;
+  return false;
+}
+export const ingShort = (id) => (INGREDIENTS[id]?.name || '').split('（')[0];
 
 // ---------- 仕入れ（食材・器） ----------
 // pack：1回の注文で届く数（unit） / cost：1パックの値段 / space：冷蔵庫の場所（パック数で数える）
@@ -392,13 +425,16 @@ export const STAFF_NAMES = ['たなか', 'すずき', 'さとう', 'やまだ', 
 
 // ---------- 賭場 ----------
 export const GAMBLES = {
-  chohan: { name: '丁半博打', icon: '🎲', lv: 1, desc: '壺振りが2つのサイコロを振る。合計が偶数なら「丁」、奇数なら「半」。当たると賭け金の2倍（寺銭5%を引く）' },
-  chinchiro: { name: 'チンチロリン', icon: '🥣', lv: 8, desc: '親（胴元）と子がどんぶりに3つのサイコロを振って、役の強さで勝負。ピンゾロは5倍、ゾロ目は3倍、シゴロは2倍' },
-  slot: { name: 'スロット', icon: '🎰', lv: 12, desc: '3つのリールの絵柄をそろえる。7・7・7で200倍！' },
+  chohan: { name: '丁半博打', icon: '🎲', lv: 1, desc: '壺振りが2つのサイコロを振って伏せる。合計が偶数なら「丁」、奇数なら「半」、同じ目なら「ゾロ目」。丁半は2倍・ゾロ目は5倍（もうけから寺銭5%）' },
+  chinchiro: { name: 'チンチロリン', icon: '🥣', lv: 8, desc: '親（胴元）が振ったあと、自分で「振る！」を押して3回まで振る。ピンゾロは5倍、ゾロ目は3倍、シゴロは2倍' },
+  slot: { name: 'スロット', icon: '🎰', lv: 12, desc: '3つのリールを自分でSTOP。7・7・7で200倍＋ジャックポット総取り！' },
 };
 export const BET_CHIPS = [100, 1000, 5000, 10000, 50000, 100000];
 export const CHOHAN_FEE = 0.05; // 寺銭
-export const CHOHAN_T = { bet: 14, roll: 2.6, show: 5 };
+// 丁半：bet＝張る時間 / call＝「丁半そろいました、勝負！」の溜め / roll＝壺を振る / open＝壺をゆっくり開ける / show＝結果
+export const CHOHAN_T = { bet: 16, call: 3.2, roll: 3.4, open: 3.6, show: 6 };
+export const CHOHAN_ZORO = 5; // ゾロ目に張って当たると5倍（寺銭あり）
+export const SLOT_JP = { base: 50000, rate: 0.03 }; // スロットのジャックポット（7・7・7で総取り）。1回ごとに賭け金の3%がたまる
 export const SLOT_SYMS = [['🍒', 8], ['🔔', 6], ['🍉', 5], ['🍜', 4], ['BAR', 3], ['7', 1]];
 export const SLOT_PAY = { '7': 200, BAR: 40, '🍜': 20, '🍉': 12, '🔔': 8, '🍒': 5 };
 export const SLOT_CHERRY2 = 2.5;

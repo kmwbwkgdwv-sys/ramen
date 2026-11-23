@@ -2,7 +2,8 @@
 import {
   FIXTURES, SOUPS, BROTHS, TARES, BROTH_EXTRA, POT_PER, AKU_RATE, TARE_MIX, OLD_SOUP_SETS, DRY_MAX, WASH_T, DRAIN_T, FLOAT_CASH, soupOf, TOPPINGS, SIDES, GRIDDLE, HARD, INGREDIENTS, ING_LIST, DISHES, STAFF_ROLES, STAFF_SLOTS, SPEEDS, STAFF_NAMES,
   OPEN_TIME, GAME_MIN_PER_SEC, SPAWN_POINTS, PLAYER_BOUNDS, START_COLS, STAFF_HOME, CRATE_AREA, SHIPPING_FEE, ORDER_MAX, CELL,
-  SOUP_READY, SOUP_RICH, RICE_READY, NOODLE_OVER, DIRTY_MAX, TOP_MAX, MENU_RAMEN_MAX, MAX_LEVEL, CHOHAN_FEE, CHOHAN_T, SLOT_SYMS, SLOT_PAY, SLOT_CHERRY2, GAMBLES,
+  SOUP_READY, SOUP_RICH, RICE_READY, NOODLE_OVER, DIRTY_MAX, TOP_MAX, MENU_RAMEN_MAX, MAX_LEVEL, CHOHAN_FEE, CHOHAN_T, CHOHAN_ZORO, SLOT_SYMS, SLOT_PAY, SLOT_CHERRY2, SLOT_JP, GAMBLES,
+  POT_FILL_T, POT_RINSE_T, RICE_WASH_T, carryInfo, ingShort, ingFits,
   zones, keepClear, getWalls, expandTargets, fixtureFootprint, snapFixture, localToWorld, frontSpot, seatPos, seatAccess, seatYaw, ticketSpot,
   staffK, staffSlotOpen, hasStaffLicense, ticketLimit, closeTime, xpNeed, xpOf, fixtureUnlocked, unlocksAt, ingUnlocked, menuValue, menuLimit,
   isCounter, inHall, inKitchen, colRect, COUNTER_Z, KITCHEN_Z, ownCols, BUILDING, FRONT_Z, DOOR,
@@ -78,15 +79,17 @@ export function normalizeStore(st) {
   st.rev ||= 1; st.level = clamp(st.level || 1, 1, MAX_LEVEL); st.xp ||= 0; st.till = Math.max(0, st.till || 0);
   if (st.level >= MAX_LEVEL) st.xp = 0;
   st.fixtures = st.fixtures.filter((f) => FIXTURES[f.t]);
-  // 持っている物：料理は捨てて洗い物に、下げた食器は洗い場へ
+  // 持っている物：料理は捨てて洗い物に、下げた食器は洗い場へ、食材は冷蔵庫へ、鍋はコンロへ
   for (const [k, hd] of Object.entries(st.hand || {})) {
     if (hd?.t === 'dish' && DISHES[hd.d?.k]) st.dirty[hd.d.k]++;
     if (hd?.t === 'dirty') for (const x of hd.a || []) if (DISHES[x]) st.dirty[x]++;
     if (hd?.t === 'clean') for (const x of hd.a || []) if (DISHES[x]) st.dry[x]++;
     if (hd?.t === 'cash' && hd.v > 0) { st.money += hd.v; st.till += hd.v; }
+    if (hd?.t === 'ing' && INGREDIENTS[hd.k] && hd.n > 0) st.stock[hd.k] = (st.stock[hd.k] || 0) + hd.n;
     delete st.hand[k];
   }
   st.hand = {};
+  for (const f of st.fixtures) if (f.away != null) { f.away = null; if (FIXTURES[f.t]?.pot) f.pot = null; }
   for (const f of st.fixtures) {
     const d = FIXTURES[f.t];
     initState(f);
@@ -94,6 +97,7 @@ export function normalizeStore(st) {
       const P = f.pot;
       if (P && P.k && !P.b && P.sv > 0 && SOUPS[P.k]) { const S = SOUPS[P.k]; f.pot = { w: 1, n: { [BROTHS[S.broth].item]: Math.ceil(P.sv / POT_PER) }, b: S.broth, ha: BROTHS[S.broth].rich, hs: 0, sk: 1, sv: P.sv, used: 0, fire: 0, off: -999, dry: null }; st.tare[S.tare] = (st.tare[S.tare] || 0) + P.sv; }
       else if (P && P.w > 0 && P.n) { P.ha = P.fire && P.b ? Math.max(P.ha || 0, BROTHS[P.b].ready) : (P.ha || 0); P.hs = 0; P.off = 0; P.dry = null; P.sk = Math.min(P.sk || 0, 1); }
+      else if (P && (P.dirty || P.b || P.used > 0)) f.pot = { w: 0, n: {}, b: null, ha: 0, hs: 0, sk: 0, sv: 0, used: 0, fire: 0, off: 0, dry: null, dirty: 1 };
       else f.pot = null;
     }
     if (d.topping) f.tj = null;
@@ -239,7 +243,7 @@ export function seatLabels(st) {
   return out;
 }
 
-export function newDyn() { return { customers: [], staffRt: {}, deliveries: [], spawnT: 4, cid: 1, seats: {}, tq: {}, fires: [], proj: [], pid: 1, thief: null, ch: { ph: 'bet', t: CHOHAN_T.bet, bets: {}, d: [1, 1], n: 1, hist: [] } }; }
+export function newDyn() { return { customers: [], staffRt: {}, deliveries: [], spawnT: 4, cid: 1, seats: {}, tq: {}, fires: [], proj: [], pid: 1, thief: null, ch: { ph: 'shake', t: CHOHAN_T.roll, bets: {}, d: [randi(1, 6), randi(1, 6)], n: 1, hist: [] }, cc: {} }; }
 
 export class Sim {
   constructor(store) {
@@ -282,36 +286,105 @@ export class Sim {
     this.setHand(uid, { t: 'dish', d: { k, tp: [], t: this.clk } });
     this.sfx('pick', f.x, f.z); this.bump();
   }
-  // 寸胴鍋：水を入れる → 骨などの材料・香味野菜を入れる → 火にかける → アクを取る → 丼に注ぐ
-  a_water(uid, a) {
+  // ---------- 手で運ぶ：持っている食材を1つ（または1回分）使う ----------
+  useIng(uid, n = 1) {
+    const hd = this.hand(uid); if (hd?.t !== 'ing') return;
+    hd.n -= n; if (hd.n <= 0) this.setHand(uid, null);
+  }
+  ingHeld(uid, pred) { const hd = this.hand(uid); return hd?.t === 'ing' && INGREDIENTS[hd.k] && pred(hd.k, INGREDIENTS[hd.k]) ? hd : null; }
+  // 冷蔵庫から食材を取る（同じ食材なら重ねて持てる）
+  a_ingTake(uid, a) {
+    const st = this.store, f = this.fx(a.fid), k = a.k, I = INGREDIENTS[k], C = carryInfo(k);
+    if (!f || !FIXTURES[f.t].cap || !I || !C || !this.usable(uid, f) || !this.near(uid, f)) return;
+    if (!ingUnlocked(k, this.level)) return;
+    const hd = this.hand(uid);
+    if (hd && !(hd.t === 'ing' && hd.k === k)) return this.err(uid, '手に持っている物を置いてから取ろう');
+    const have = hd?.n || 0;
+    if (have >= C.max) return this.err(uid, `${ingShort(k)}は一度に${C.max}${C.unit}まで`);
+    const take = Math.min(C.take, C.max - have);
+    if ((st.stock[k] || 0) < take) return this.err(uid, `${I.name}が冷蔵庫にありません（パソコンで仕入れよう）`);
+    st.stock[k] -= take; if (!st.stock[k]) delete st.stock[k];
+    if (hd) hd.n += take; else this.setHand(uid, { t: 'ing', k, n: take });
+    this.sfx('pick', f.x, f.z); this.bump();
+  }
+  // 冷蔵庫に戻す
+  a_ingBack(uid, a) {
+    const st = this.store, f = this.fx(a.fid), hd = this.hand(uid);
+    if (!f || !FIXTURES[f.t].cap || hd?.t !== 'ing' || !this.near(uid, f)) return;
+    st.stock[hd.k] = (st.stock[hd.k] || 0) + hd.n;
+    this.setHand(uid, null); this.sfx('place', f.x, f.z); this.bump();
+  }
+  // 寸胴鍋：空の鍋を持ち上げる（火は止めてから）
+  a_potLift(uid, a) {
     const f = this.fx(a.fid), def = f && FIXTURES[f.t];
     if (!def?.pot || !this.usable(uid, f) || !this.near(uid, f)) return;
-    if (this.hand(uid)) return this.err(uid, '手に持っている物を置いてから');
-    if (f.pot?.w > 0) return this.err(uid, 'もう水が入っています');
-    const fire = f.pot?.fire || 0;
-    f.pot = { w: 1, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire, off: this.clk, dry: null };
-    this.sfx('pour', f.x, f.z); this.bump();
+    if (this.hand(uid)) return this.err(uid, '手に持っている物を置いてから持とう');
+    if (f.away) return this.err(uid, 'この鍋はいま持ち出されています');
+    const P = f.pot;
+    if (P?.w > 0) return this.err(uid, 'だしが入っている鍋は重くて持てません（使い切るか、捨ててから）');
+    if (P?.fire) return this.err(uid, '⚠ 火がついたまま鍋は持てません。先に火を止めよう');
+    const dirty = !!(P && (P.dirty || P.b || Object.keys(P.n || {}).length || P.used > 0));
+    f.pot = null; f.away = uid;
+    this.setHand(uid, { t: 'pot', fid: f.id, ft: f.t, w: 0, dirty: dirty ? 1 : 0, cl: 0 });
+    this.sfx('pick', f.x, f.z); this.bump();
   }
+  // 洗い場の水道：鍋を洗う（だしがらが残っていれば）→ 水を張る（長押し）
+  a_potFill(uid, a) {
+    const f = this.fx(a.fid), hd = this.hand(uid);
+    if (!f || !FIXTURES[f.t].sink || hd?.t !== 'pot' || !this.usable(uid, f) || !this.near(uid, f)) return;
+    const dur = clamp(+a.dur || 0.13, 0.02, 0.4);
+    if (hd.dirty) {
+      hd.cl = Math.min(1, (hd.cl || 0) + dur / POT_RINSE_T);
+      if (Math.random() < 0.45) this.sfx('wash', f.x, f.z);
+      if (hd.cl >= 1) { hd.dirty = 0; this.toast(uid, '🧽 鍋のだしがらを捨てて、きれいに洗いました。続けて長押しで水を張ろう', 'ok'); this.sfx('dish', f.x, f.z); }
+      this.bump(); return;
+    }
+    if (hd.w >= 1) return this.err(uid, '水はもういっぱいです（コンロに戻そう）');
+    hd.w = Math.min(1, +(hd.w + dur / (POT_FILL_T[hd.ft] || POT_FILL_T.pot)).toFixed(3));
+    if (Math.random() < 0.5) this.sfx('pour', f.x, f.z);
+    if (hd.w >= 1) { this.toast(uid, '🚰 水がいっぱいになりました。重いので気をつけてコンロに戻そう', 'ok'); this.sfx('ding', f.x, f.z); }
+    this.bump();
+  }
+  // 鍋をコンロに戻す
+  a_potSet(uid, a) {
+    const f = this.fx(a.fid), hd = this.hand(uid);
+    if (!f || !FIXTURES[f.t].pot || hd?.t !== 'pot' || !this.near(uid, f)) return;
+    if (hd.fid !== f.id) return this.err(uid, 'この鍋は別のコンロのものです');
+    if (!this.usable(uid, f)) return;
+    if (hd.w > 0 && hd.w < 1) return this.err(uid, '水が少なすぎます（洗い場で満タンまで入れよう）');
+    this.returnPot(f, hd);
+    this.setHand(uid, null); this.sfx('place', f.x, f.z); this.bump();
+  }
+  // 持っている鍋の状態でコンロに戻す（水が満タンなら水の入った鍋になる）
+  returnPot(f, hd) {
+    f.away = null;
+    if (hd.w >= 1) f.pot = { w: 1, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire: 0, off: this.clk, dry: null };
+    else f.pot = hd.dirty ? { w: 0, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire: 0, off: this.clk, dry: null, dirty: 1 } : null;
+  }
+  // 持っている骨・香味野菜・昆布を鍋に入れる（1つずつ）
   a_potAdd(uid, a) {
-    const st = this.store, f = this.fx(a.fid), def = f && FIXTURES[f.t], id = a.id, I = INGREDIENTS[id];
-    if (!def?.pot || !I || I.cat !== 'soup' || !this.usable(uid, f) || !this.near(uid, f)) return;
-    const P = f.pot; if (!(P?.w > 0)) return this.err(uid, '先に水を入れよう');
+    const f = this.fx(a.fid), def = f && FIXTURES[f.t];
+    if (!def?.pot || !this.usable(uid, f) || !this.near(uid, f)) return;
+    const hd = this.ingHeld(uid, (k, I) => I.cat === 'soup');
+    if (!hd) return this.err(uid, '冷蔵庫から鶏ガラ・豚骨・香味野菜などを持ってこよう');
+    const id = hd.k, I = INGREDIENTS[id];
+    if (f.away) return this.err(uid, '鍋がコンロにのっていません');
+    const P = f.pot; if (!(P?.w > 0)) return this.err(uid, '先に鍋を洗い場に持っていって、水を張ってこよう');
     if (P.used > 0) return this.err(uid, '使いはじめた鍋には足せません（空になったら炊き直そう）');
-    if (!ingUnlocked(id, this.level)) return;
-    if (!((st.stock[id] || 0) > 0)) return this.err(uid, `${I.name}がありません（パソコンで仕入れよう）`);
     const cap = def.pot.sv / POT_PER, mains = Object.entries(P.n).filter(([k]) => INGREDIENTS[k]?.broth).reduce((t, [, v]) => t + v, 0);
     if (I.broth && mains >= cap) return this.err(uid, `この鍋に入る骨などの材料は${cap}つまで（1つで${POT_PER}杯分）`);
-    if (!I.broth && (P.n[id] || 0) >= 2) return this.err(uid, `${I.name}はもう十分入っています`);
-    st.stock[id]--; if (!st.stock[id]) delete st.stock[id];
+    if (!I.broth && (P.n[id] || 0) >= 2) return this.err(uid, `${ingShort(id)}はもう十分入っています`);
     potCommit(P, this.clk);
     P.n[id] = (P.n[id] || 0) + 1;
     const nb = potBroth(P);
     if (nb !== P.b) { if (P.b) { P.ha = Math.min(P.ha, 8); P.sk = 0; } P.b = nb; }
     P.sv = potServings(P, def);
+    this.useIng(uid);
     this.sfx('splash', f.x, f.z); this.bump();
   }
   a_fire(uid, a) {
     const f = this.fx(a.fid), def = f && FIXTURES[f.t]; if (!def?.pot || !this.near(uid, f)) return;
+    if (f.away) return this.err(uid, '鍋がコンロにのっていません（持ち出し中）');
     if (!f.pot) f.pot = { w: 0, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire: 0, off: this.clk, dry: null };
     const P = f.pot; potCommit(P, this.clk);
     P.fire = P.fire ? 0 : 1; P.off = this.clk; P.hs = this.clk; P.dry = P.fire && !(P.w > 0) ? this.clk : null;
@@ -326,8 +399,9 @@ export class Sim {
     this.bump();
   }
   a_soupDump(uid, a) {
-    const f = this.fx(a.fid); if (!f?.pot) return;
-    const fire = f.pot.fire; f.pot = fire ? { w: 0, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire, off: this.clk, dry: this.clk } : null;
+    const f = this.fx(a.fid); if (!f?.pot || !this.near(uid, f)) return;
+    const fire = f.pot.fire, dirty = !!(f.pot.b || Object.keys(f.pot.n || {}).length || f.pot.used);
+    f.pot = fire || dirty ? { w: 0, n: {}, b: null, ha: 0, hs: this.clk, sk: 0, sv: 0, used: 0, fire, off: this.clk, dry: fire ? this.clk : null, dirty: dirty ? 1 : 0 } : null;
     this.sfx('trash', f.x, f.z); this.bump();
   }
   a_soupPour(uid, a) {
@@ -339,20 +413,21 @@ export class Sim {
     const P = f.pot;
     hd.d.broth = P.b; hd.d.sq = soupQuality(f, this.clk); hd.d.soup = soupOf(P.b, hd.d.tare); hd.d.t = this.clk;
     P.sv--; P.used = (P.used || 0) + 1;
-    if (P.sv <= 0) { potCommit(P, this.clk); P.w = 0; if (P.fire) P.dry = this.clk; this.toast(uid, '🍲 寸胴鍋が空になりました（火を止めて、水を入れて炊き直そう）', 'warn'); }
+    if (P.sv <= 0) { potCommit(P, this.clk); P.w = 0; P.dirty = 1; if (P.fire) P.dry = this.clk; if (!String(uid).startsWith('s:')) this.toast(uid, '🍲 寸胴鍋が空になりました（火を止めて、鍋を洗い場で洗って水を張り、炊き直そう）', 'warn'); }
     this.sfx('pour', f.x, f.z); this.bump();
   }
-  // 茹で麺機
+  // 茹で麺機：持ってきた麺（1玉）を空いているてぼに入れる
   a_noodleIn(uid, a) {
-    const st = this.store, f = this.fx(a.fid), def = f && FIXTURES[f.t];
+    const f = this.fx(a.fid), def = f && FIXTURES[f.t];
     if (!def?.baskets || !this.usable(uid, f) || !this.near(uid, f)) return;
+    if (!this.ingHeld(uid, (k) => k === 'men')) return this.err(uid, '冷蔵庫から生麺を持ってこよう');
     let bi = a.bi ?? -1;
     if (bi < 0 || f.bk[bi]) bi = f.bk.findIndex((x) => !x);
     if (bi < 0) return this.err(uid, 'てぼがいっぱいです');
-    if (!((st.stock.men || 0) > 0)) return this.err(uid, '生麺がありません（パソコンで仕入れよう）');
-    st.stock.men--; if (!st.stock.men) delete st.stock.men;
-    f.bk[bi] = { t0: this.clk };
+    f.bk[bi] = { t0: this.clk, ...(String(uid).startsWith('s:') ? { by: uid } : {}) };
+    this.useIng(uid);
     this.sfx('splash', f.x, f.z); this.bump();
+    return bi;
   }
   // てぼを選ぶ（指定がなければいちばん長く茹でている麺）
   _basket(f, bi) { if (bi == null || bi < 0 || !f.bk[bi]) { let best = -1, bt = -1; f.bk.forEach((x, i) => { if (x && this.clk - x.t0 > bt) { bt = this.clk - x.t0; best = i; } }); bi = best; } return bi; }
@@ -392,14 +467,16 @@ export class Sim {
     f.bk[bi] = null; this.sfx('trash', f.x, f.z); this.bump();
   }
   // トッピング台：タレ（かえし）を材料から作る → 丼に入れる
+  // 持ってきたタレの材料（醤油の一升瓶など）をボウルにあけて、タレ作りを始める
   a_tareStart(uid, a) {
-    const st = this.store, f = this.fx(a.fid), T = TARES[a.k];
-    if (!f || !FIXTURES[f.t].topping || !T || this.level < T.lv || !this.usable(uid, f) || !this.near(uid, f)) return;
-    if (this.hand(uid)) return this.err(uid, '手を空けてから作ろう');
-    if (f.tj) return this.err(uid, 'いまタレを作っています（長押しで混ぜよう）');
-    if (!((st.stock[T.raw] || 0) > 0)) return this.err(uid, `${INGREDIENTS[T.raw].name}がありません（パソコンで仕入れよう）`);
-    st.stock[T.raw]--; if (!st.stock[T.raw]) delete st.stock[T.raw];
-    f.tj = { k: a.k, p: 0 }; this.sfx('pour', f.x, f.z); this.bump();
+    const f = this.fx(a.fid);
+    if (!f || !FIXTURES[f.t].topping || !this.usable(uid, f) || !this.near(uid, f)) return;
+    const hd = this.ingHeld(uid, (k, I) => I.cat === 'tare');
+    if (!hd) return this.err(uid, '冷蔵庫からタレの材料（醤油・塩・味噌など）を持ってこよう');
+    const k = INGREDIENTS[hd.k].tare, T = TARES[k]; if (!T || this.level < T.lv) return;
+    if (f.tj) return this.err(uid, 'いまタレを作っています（先に混ぜ終わろう）');
+    this.useIng(uid);
+    f.tj = { k, p: 0 }; this.sfx('pour', f.x, f.z); this.bump();
   }
   a_tareMix(uid, a) {
     const st = this.store, f = this.fx(a.fid); if (!f?.tj || !this.near(uid, f)) return;
@@ -434,28 +511,43 @@ export class Sim {
     this.sfx('top', f.x, f.z); this.bump();
   }
   // まな板：仕込み（長押し）
+  // まな板：持ってきた食材をのせる → 手を空けて長押しで切る
+  a_boardPut(uid, a) {
+    const f = this.fx(a.fid);
+    if (!f || !FIXTURES[f.t].board || !this.usable(uid, f) || !this.near(uid, f)) return;
+    const hd = this.ingHeld(uid, (k, I) => I.cat === 'top');
+    if (!hd) return this.err(uid, '冷蔵庫からトッピングの食材を持ってこよう');
+    if (f.job) return this.err(uid, 'まな板の上の食材を先に切ってしまおう');
+    const tid = Object.keys(TOPPINGS).find((t) => TOPPINGS[t].raw === hd.k); if (!tid || this.level < TOPPINGS[tid].lv) return;
+    f.job = { tid, p: 0, by: uid };
+    this.useIng(uid);
+    this.sfx('place', f.x, f.z); this.bump();
+  }
   a_chop(uid, a) {
     const st = this.store, f = this.fx(a.fid);
     if (!f || !FIXTURES[f.t].board || !this.usable(uid, f) || !this.near(uid, f)) return;
-    if (this.hand(uid)) return this.err(uid, '手に何も持たずに仕込もう');
-    if (!f.job) {
-      const T = TOPPINGS[a.tid]; if (!T || this.level < T.lv) return;
-      if (!((st.stock[T.raw] || 0) > 0)) return this.err(uid, `${INGREDIENTS[T.raw].name}がありません（仕入れよう）`);
-      st.stock[T.raw]--; if (!st.stock[T.raw]) delete st.stock[T.raw];
-      f.job = { tid: a.tid, p: 0, by: uid };
-    }
+    if (!f.job) return this.err(uid, '冷蔵庫から食材を持ってきて、まな板にのせよう');
+    if (this.hand(uid)) return this.err(uid, '手に何も持たずに切ろう');
     const T = TOPPINGS[f.job.tid];
     f.job.p = Math.min(1, f.job.p + clamp(+a.dur || 0.13, 0.02, 0.4) / T.prep);
     f.job.by = uid;
     if (Math.random() < 0.5) this.sfx('chop', f.x, f.z);
-    if (f.job.p >= 1) {
-      st.prep[f.job.tid] = (st.prep[f.job.tid] || 0) + T.per;
-      this.toast(uid, `🔪 ${T.icon}${T.name}を${T.per}人前 仕込みました（いま${st.prep[f.job.tid]}人前）`, 'ok');
-      f.job = null; this.sfx('ding', f.x, f.z);
-    }
+    if (f.job.p >= 1) this.finishChop(f, uid);
     this.bump();
   }
-  a_chopCancel(uid, a) { const f = this.fx(a.fid); if (f?.job) { const T = TOPPINGS[f.job.tid]; this.store.stock[T.raw] = (this.store.stock[T.raw] || 0) + 1; f.job = null; this.bump(); } }
+  finishChop(f, uid) {
+    const st = this.store, T = TOPPINGS[f.job.tid];
+    st.prep[f.job.tid] = (st.prep[f.job.tid] || 0) + T.per;
+    if (!String(uid).startsWith('s:')) this.toast(uid, `🔪 ${T.icon}${T.name}を${T.per}人前 仕込みました（トッピング台に並びます・いま${st.prep[f.job.tid]}人前）`, 'ok');
+    f.job = null; this.sfx('ding', f.x, f.z);
+  }
+  // やめる：まな板の食材を手に戻す（手がふさがっていれば冷蔵庫へ）
+  a_chopCancel(uid, a) {
+    const f = this.fx(a.fid); if (!f?.job || f.job.p > 0.05) return;
+    const raw = TOPPINGS[f.job.tid].raw; f.job = null;
+    if (!this.hand(uid)) this.setHand(uid, { t: 'ing', k: raw, n: 1 }); else this.store.stock[raw] = (this.store.stock[raw] || 0) + 1;
+    this.bump();
+  }
   // 洗い場
   a_dirtyPut(uid, a) {
     const st = this.store, f = this.fx(a.fid), hd = this.hand(uid);
@@ -523,13 +615,37 @@ export class Sim {
     if (hd.t === 'dish') { if (dishEmpty(hd.d)) { this.store.dish[hd.d.k]++; this.setHand(uid, null); this.bump(); } return; }
     if (hd.t === 'ext' || hd.t === 'shuri') { this.setHand(uid, null); this.bump(); }
   }
-  // 炊飯器
+  // 手に持っている物を元の場所に戻す（退出・解雇・読み込みのとき）
+  dropHand(uid) {
+    const hd = this.hand(uid), st = this.store; if (!hd) return;
+    if (hd.t === 'dish') { if (dishEmpty(hd.d)) st.dish[hd.d.k]++; else st.dirty[hd.d.k]++; }
+    if (hd.t === 'dirty') for (const k of hd.a) st.dirty[k]++;
+    if (hd.t === 'clean') for (const k of hd.a) st.dry[k]++;
+    if (hd.t === 'cash') { st.money += hd.v; st.till += hd.v; }
+    if (hd.t === 'ing' && INGREDIENTS[hd.k]) st.stock[hd.k] = (st.stock[hd.k] || 0) + hd.n;
+    if (hd.t === 'pot') { const f = this.fx(hd.fid); if (f) this.returnPot(f, { ...hd, w: hd.w >= 1 ? 1 : 0 }); }
+    this.setHand(uid, null);
+  }
+  // 洗い場：持ってきた米を研ぐ（長押し）
+  a_riceWash(uid, a) {
+    const f = this.fx(a.fid);
+    if (!f || !FIXTURES[f.t].sink || !this.usable(uid, f) || !this.near(uid, f)) return;
+    const hd = this.ingHeld(uid, (k) => k === 'kome'); if (!hd) return;
+    if ((hd.ws || 0) >= 1) return this.err(uid, 'もう研げています（炊飯器へ）');
+    hd.ws = Math.min(1, +((hd.ws || 0) + clamp(+a.dur || 0.13, 0.02, 0.4) / RICE_WASH_T).toFixed(3));
+    if (Math.random() < 0.45) this.sfx('wash', f.x, f.z);
+    if (hd.ws >= 1) { this.toast(uid, '🍚 お米を研ぎました。炊飯器に入れて炊こう', 'ok'); this.sfx('ding', f.x, f.z); }
+    this.bump();
+  }
+  // 炊飯器：研いだ米を入れて炊く
   a_riceStart(uid, a) {
-    const st = this.store, f = this.fx(a.fid);
+    const f = this.fx(a.fid);
     if (f?.t !== 'rice' || !this.usable(uid, f) || !this.near(uid, f)) return;
     if (f.rc && f.rc.sv > 0) return this.err(uid, 'まだごはんが残っています');
-    if (!((st.stock.kome || 0) > 0)) return this.err(uid, '米がありません（仕入れよう）');
-    st.stock.kome--; if (!st.stock.kome) delete st.stock.kome;
+    const hd = this.ingHeld(uid, (k) => k === 'kome');
+    if (!hd) return this.err(uid, '冷蔵庫から米を持ってきて、洗い場で研いでから入れよう');
+    if ((hd.ws || 0) < 1) return this.err(uid, '先に洗い場で米を研ごう（長押し）');
+    this.useIng(uid);
     f.rc = { t0: this.clk, sv: FIXTURES.rice.rice.sv };
     this.sfx('click', f.x, f.z); this.bump();
   }
@@ -545,13 +661,25 @@ export class Sim {
   }
   // 餃子焼き器・フライヤー
   a_grillStart(uid, a) {
-    const st = this.store, f = this.fx(a.fid), G = GRIDDLE[FIXTURES[f?.t]?.griddle];
+    const f = this.fx(a.fid), G = GRIDDLE[FIXTURES[f?.t]?.griddle];
     if (!G || !this.usable(uid, f) || !this.near(uid, f)) return;
     if (f.gr) return this.err(uid, 'いま焼いています');
-    if ((st.stock[G.item] || 0) < G.use) return this.err(uid, `${INGREDIENTS[G.item].name}が足りません（仕入れよう）`);
-    st.stock[G.item] -= G.use; if (!st.stock[G.item]) delete st.stock[G.item];
+    const hd = this.ingHeld(uid, (k) => k === G.item);
+    if (!hd) return this.err(uid, `冷蔵庫から${ingShort(G.item)}を持ってこよう`);
+    if (hd.n < G.use) return this.err(uid, `${ingShort(G.item)}が${G.use}個いります`);
+    this.useIng(uid, G.use);
     f.gr = { t0: this.clk };
     this.sfx('sizzle', f.x, f.z); this.bump();
+  }
+  // ビールサーバー：冷蔵庫から運んだ樽をつなぐ
+  a_kegSet(uid, a) {
+    const st = this.store, f = this.fx(a.fid);
+    if (f?.t !== 'beer' || !this.usable(uid, f) || !this.near(uid, f)) return;
+    if (!this.ingHeld(uid, (k) => k === 'taru')) return this.err(uid, '冷蔵庫からビール樽を持ってこよう');
+    if ((st.prep.beer || 0) > 0) return this.err(uid, `まだ樽に${st.prep.beer}杯分残っています`);
+    this.useIng(uid); st.prep.beer = 20;
+    this.toast(uid, '🛢️ 新しいビール樽をつなぎました（20杯分）', 'ok');
+    this.sfx('click', f.x, f.z); this.bump();
   }
   a_grillTake(uid, a) {
     const f = this.fx(a.fid), hd = this.hand(uid), type = FIXTURES[f?.t]?.griddle;
@@ -570,7 +698,7 @@ export class Sim {
     if (hd?.t !== 'dish' || hd.d.k !== 'mug') return this.err(uid, 'ジョッキを持ってこよう（食器棚）');
     const d = hd.d;
     if (d.side !== 'beer') {
-      if (!((st.prep.beer || 0) > 0)) { if ((st.stock.taru || 0) > 0) { st.stock.taru--; if (!st.stock.taru) delete st.stock.taru; st.prep.beer = 20; this.toast(uid, '🛢️ 新しいビール樽をつなぎました', 'ok'); } else return this.err(uid, 'ビール樽がありません（仕入れよう）'); }
+      if (!((st.prep.beer || 0) > 0)) return this.err(uid, (st.stock.taru || 0) > 0 ? '樽が空です（冷蔵庫からビール樽を運んでつなごう）' : 'ビール樽がありません（仕入れよう）');
       st.prep.beer--; if (!st.prep.beer) delete st.prep.beer;
       d.side = 'beer'; d.fill = 0; d.t = this.clk;
     }
@@ -834,6 +962,7 @@ export class Sim {
     this.sfx('coin'); this.bump();
   }
   busyFixture(f) {
+    if (f.away) return '鍋を持ち出している間は動かせません（鍋をコンロに戻してから）';
     if (f.pot && f.pot.sv > 0) return 'スープが入っている寸胴鍋は動かせません（捨ててから）';
     if (f.bk?.some(Boolean)) return '麺を茹でている間は動かせません';
     if (f.gr) return '焼いている間は動かせません';
@@ -904,6 +1033,7 @@ export class Sim {
     if (st.phase !== 'summary') return;
     st.phase = 'prep'; st.day++; st.time = OPEN_TIME; st.today = newToday(); st.till = Math.min(Math.max(0, st.money), FLOAT_CASH);
     this.dyn.customers = []; this.dyn.seats = {}; this.dyn.tq = {}; this.dyn.thief = null; this.dyn.fires = []; this.dyn.proj = [];
+    for (const g of Object.values(this.dyn.cc || {})) { st.money += g.bet; st.till += g.bet; } this.dyn.cc = {};
     this.ev({ t: 'newday', day: st.day }); this.bump();
   }
   // ---------- アルバイト ----------
@@ -930,22 +1060,17 @@ export class Sim {
   a_staffRole(uid, a) { const s = this.store.staff.find((o) => o.id === a.sid); if (!s || !STAFF_ROLES[a.role]) return; this.releaseStaff(s); s.role = a.role; this.bump(); }
   a_dismiss(uid, a) { const st = this.store, s = st.staff.find((o) => o.id === a.sid); if (!s) return; this.releaseStaff(s); st.staff = st.staff.filter((o) => o !== s); delete this.dyn.staffRt[s.id]; this.bump(); }
   releaseStaff(s) {
-    const who = 's:' + s.id, hd = this.hand(who), st = this.store;
-    if (hd?.t === 'dish') { if (dishEmpty(hd.d)) st.dish[hd.d.k]++; else st.dirty[hd.d.k]++; }
-    if (hd?.t === 'dirty') for (const k of hd.a) st.dirty[k]++;
-    this.setHand(who, null);
+    const who = 's:' + s.id;
+    this.dropHand(who);
     for (const c of this.dyn.customers) for (const l of c.lines || []) if (l.cl === s.id) l.cl = null;
     const rt = this.dyn.staffRt[s.id]; if (rt) { rt.job = null; rt.st = 'idle'; rt.t = 0.5; rt.path = null; }
   }
   playerLeft(uid) {
-    const hd = this.hand(uid), st = this.store;
-    if (hd?.t === 'dish') { if (dishEmpty(hd.d)) st.dish[hd.d.k]++; else st.dirty[hd.d.k]++; }
-    if (hd?.t === 'dirty') for (const k of hd.a) st.dirty[k]++;
-    if (hd?.t === 'clean') for (const k of hd.a) st.dry[k]++;
-    if (hd?.t === 'cash') { st.money += hd.v; st.till += hd.v; }
-    this.setHand(uid, null);
+    const st = this.store;
+    this.dropHand(uid);
     const c = this.heldCrate(uid), p = this.players[uid]; if (c) c.loc = { t: 'f', x: p?.x ?? 0, y: 0, z: p?.z ?? 0, ry: 0 };
     const ob = this.dyn.ch.bets[uid]; if (ob) { st.money += ob.a; st.till += ob.a; }
+    const cg = this.dyn.cc?.[uid]; if (cg) { st.money += cg.bet; st.till += cg.bet; delete this.dyn.cc[uid]; }
     delete this.dyn.ch.bets[uid];
     delete this.players[uid]; this.bump();
   }
@@ -972,51 +1097,85 @@ export class Sim {
   a_bet(uid, a) {
     const C = this.dyn.ch;
     if (!this.inHallP(uid)) return this.err(uid, '賭場の中で賭けてね');
-    if (C.ph !== 'bet') return this.err(uid, 'いまは賭けられません（次の勝負を待とう）');
+    if (C.ph !== 'bet') return this.err(uid, C.ph === 'shake' ? '壺を振っています。伏せたら張れます' : 'いまは賭けられません（次の勝負を待とう）');
     const old = C.bets[uid]; if (old) { this.giveCash(uid, old.a); delete C.bets[uid]; }
     if (a.cancel) { this.bump(); return; }
-    if (a.s !== 'cho' && a.s !== 'han') return;
-    const v = this.pay(uid, a.a); if (!v) return;
+    if (a.s !== 'cho' && a.s !== 'han' && a.s !== 'zoro') return;
+    const v = this.pay(uid, a.a); if (!v) { this.bump(); return; }
     C.bets[uid] = { s: a.s, a: v, n: this.players[uid]?.name || '' };
+    // 締め切り間際に張ったら、少しだけ待ってあげる（駆け込み）
+    if (C.t < 2.5) C.t = 2.5;
     this.sfx('chip'); this.bump();
   }
+  // 丁半：壺を振って伏せる → 張る → 「丁半そろいました」 → 「勝負！」で壺をゆっくり開ける → 出目
   updateChohan(dt) {
     const C = this.dyn.ch;
     C.t -= dt;
     if (C.t > 0) return;
-    if (C.ph === 'bet') {
+    if (C.ph === 'shake') { C.ph = 'bet'; C.t = CHOHAN_T.bet; this.ev({ t: 'sfx', s: 'place', x: 13, z: 0.6 }); }
+    else if (C.ph === 'bet') {
       if (!Object.keys(C.bets).length) { C.t = CHOHAN_T.bet; return; }
-      C.ph = 'roll'; C.t = CHOHAN_T.roll; C.d = [randi(1, 6), randi(1, 6)];
-      this.ev({ t: 'sfx', s: 'cup', x: 13, z: 0.6 });
-    } else if (C.ph === 'roll') {
+      C.ph = 'call'; C.t = CHOHAN_T.call;
+    } else if (C.ph === 'call') { C.ph = 'open'; C.t = CHOHAN_T.open; }
+    else if (C.ph === 'open') {
       C.ph = 'show'; C.t = CHOHAN_T.show;
-      const sum = C.d[0] + C.d[1], res = sum % 2 === 0 ? 'cho' : 'han';
+      const sum = C.d[0] + C.d[1], res = sum % 2 === 0 ? 'cho' : 'han', zoro = C.d[0] === C.d[1];
       for (const [uid, b] of Object.entries(C.bets)) {
-        const win = b.s === res, back = win ? b.a + Math.floor(b.a * (1 - CHOHAN_FEE)) : 0;
+        const win = b.s === 'zoro' ? zoro : b.s === res;
+        const back = win ? b.a + Math.floor(b.a * ((b.s === 'zoro' ? CHOHAN_ZORO : 2) - 1) * (1 - CHOHAN_FEE)) : 0;
         const net = this.gambleResult(uid, 'chohan', b.a, back);
-        this.ev({ t: 'gamble', g: 'chohan', to: uid, win, net, d: C.d, res });
+        this.ev({ t: 'gamble', g: 'chohan', to: uid, win, net, d: C.d, res, zoro, s: b.s });
       }
-      C.hist = [[C.d[0], C.d[1]], ...C.hist].slice(0, 10);
+      C.hist = [[C.d[0], C.d[1]], ...C.hist].slice(0, 12);
       this.sfx('dice', 13, 0.6);
     } else {
-      C.ph = 'bet'; C.t = CHOHAN_T.bet; C.bets = {}; C.n++;
+      // 次の勝負：壺を振り直して伏せる（出目はここで決まる・開けるまでだれにも見えない）
+      C.ph = 'shake'; C.t = CHOHAN_T.roll; C.bets = {}; C.n++; C.d = [randi(1, 6), randi(1, 6)];
+      this.ev({ t: 'sfx', s: 'cup', x: 13, z: 0.6 });
     }
   }
+  // チンチロリン：親が振る → 子（自分）が「振る」を押して最大3回振る → 役で勝負
+  // 親の役が強い（ピンゾロ・ゾロ目・シゴロ）なら親の総取り、ヒフミ・目なしなら親の負け。親が「目」なら子が振る
   a_chinchiro(uid, a) {
     if (this.level < GAMBLES.chinchiro.lv) return;
     if (!this.inHallP(uid)) return this.err(uid, '賭場の中で遊んでね');
+    if (this.dyn.cc[uid]) return this.err(uid, 'いまの勝負が終わってから');
     const v = this.pay(uid, a.a); if (!v) return;
-    const dealer = chinchiroRoll(), you = chinchiroRoll();
-    let mult = 0; // 子から見た倍率（＋なら勝ち）
-    if (you.h.r > dealer.h.r || (you.h.r === dealer.h.r && you.h.p > dealer.h.p)) mult = you.h.m;
-    else if (you.h.r < dealer.h.r || (you.h.r === dealer.h.r && you.h.p < dealer.h.p)) mult = -dealer.h.m;
-    if (you.h.k === 'hifumi') mult = -2; // ヒフミは倍払い
-    if (dealer.h.k === 'hifumi' && you.h.k !== 'hifumi') mult = 2;
-    if (dealer.h.k === 'hifumi' && you.h.k === 'hifumi') mult = 0;
+    const dealer = chinchiroRoll(), G = { bet: v, dealer, you: [], t: this.clk };
+    this.dyn.cc[uid] = G;
+    const k = dealer.h.k;
+    if (k === 'pinzoro' || k === 'zoro' || k === 'shigoro') return this._chinEnd(uid, -dealer.h.m, 'dealer');
+    if (k === 'hifumi') return this._chinEnd(uid, 2, 'dealer');
+    if (k === 'none') return this._chinEnd(uid, 1, 'dealer');
+    this.ev({ t: 'gamble', g: 'chinchiro', to: uid, step: 'dealer', dealer, bet: v });
+    this.sfx('dice'); this.bump();
+  }
+  a_chinRoll(uid, a) {
+    const G = this.dyn.cc[uid]; if (!G || G.end) return;
+    do {
+      const d = [randi(1, 6), randi(1, 6), randi(1, 6)], h = chinchiroHand(d);
+      G.you.push(d);
+      if (h || G.you.length >= 3) {
+        const you = { rolls: G.you, h: h || { k: 'none', name: '目なし', r: 1, p: 0, m: 1 } }, D = G.dealer.h;
+        let mult;
+        if (you.h.k === 'pinzoro' || you.h.k === 'zoro' || you.h.k === 'shigoro') mult = you.h.m;
+        else if (you.h.k === 'hifumi') mult = -2;
+        else if (you.h.k === 'none') mult = -1;
+        else mult = you.h.p > D.p ? 1 : you.h.p < D.p ? -1 : 0;
+        return this._chinEnd(uid, mult, 'you', you);
+      }
+      this.ev({ t: 'gamble', g: 'chinchiro', to: uid, step: 'roll', d, left: 3 - G.you.length });
+    } while (a?.all);
+    this.sfx('dice'); this.bump();
+  }
+  _chinEnd(uid, mult, by, you = null) {
+    const G = this.dyn.cc[uid]; if (!G) return;
+    G.end = 1; delete this.dyn.cc[uid];
+    const v = G.bet;
     // 負けたときは役の倍率ぶん払う（お店の資金が足りない分はまけてもらえる）
     const back = Math.max(v + v * mult, -(this.store.money + (this.hand(uid)?.t === 'cash' ? this.hand(uid).v : 0)));
     const net = this.gambleResult(uid, 'chinchiro', v, back);
-    this.ev({ t: 'gamble', g: 'chinchiro', to: uid, dealer, you, net, bet: v });
+    this.ev({ t: 'gamble', g: 'chinchiro', to: uid, step: 'end', by, dealer: G.dealer, you, net, bet: v, mult });
     this.sfx('dice');
   }
   a_slot(uid, a) {
@@ -1029,9 +1188,12 @@ export class Sim {
     let mult = 0;
     if (r[0] === r[1] && r[1] === r[2]) mult = SLOT_PAY[r[0]] || 0;
     else if (r.filter((s) => s === '🍒').length === 2) mult = SLOT_CHERRY2;
-    const back = Math.floor(v * mult);
+    // ジャックポット：1回ごとに賭け金の一部がたまって、7・7・7で総取り
+    const st = this.store; st.jp = Math.round((st.jp || SLOT_JP.base) + v * SLOT_JP.rate);
+    let jp = 0; if (r[0] === '7' && r[1] === '7' && r[2] === '7') { jp = st.jp; st.jp = SLOT_JP.base; }
+    const back = Math.floor(v * mult) + jp;
     const net = this.gambleResult(uid, 'slot', v, back);
-    this.ev({ t: 'gamble', g: 'slot', to: uid, r, net, bet: v, mult });
+    this.ev({ t: 'gamble', g: 'slot', to: uid, r, net, bet: v, mult, jp, pool: st.jp });
     this.sfx('slot');
   }
 
@@ -1474,18 +1636,39 @@ export class Sim {
     if (rt.st === 'walk') {
       const j = rt.job;
       if (!j || !this.jobValid(s, j)) { this.cancelJob(s, rt); return; }
-      if (stepPath(rt, dt, Math.max(1.3, 2.0 * staffK(s, j.skill)))) {
-        rt.st = 'work'; rt.t = j.dur; rt.an = j.an || 'reach';
-        if (j.face) rt.ry = Math.atan2(j.face[0] - rt.x, j.face[1] - rt.z);
-        this.jobStart(s, rt, j, who);
+      const S = this.curStep(j);
+      // 鍋に水を入れて運んでいるときは重いので遅い
+      const hd = this.hand(who), heavy = hd?.t === 'pot' ? (hd.w > 0 ? 0.55 : 0.85) : 1;
+      if (stepPath(rt, dt, Math.max(1.3, 2.0 * staffK(s, S.skill || j.skill)) * heavy)) {
+        rt.st = 'work'; rt.t = S.dur; rt.an = S.an || 'reach'; rt.wait = 0;
+        if (S.face) rt.ry = Math.atan2(S.face[0] - rt.x, S.face[1] - rt.z);
+        if (!j.steps) this.jobStart(s, rt, j, who);
       }
       return;
     }
     if (rt.st === 'work') {
-      rt.t -= dt * staffK(s, rt.job?.skill);
-      if (rt.job?.sfx && Math.random() < dt * 2) this.sfx(rt.job.sfx, rt.x, rt.z);
+      const j = rt.job, S = j ? this.curStep(j) : null;
+      // 待つ工程（麺が茹で上がるまで・焼き上がるまで）
+      if (S?.until && !S.until()) { rt.wait = (rt.wait || 0) + dt; if (rt.wait < (S.max ?? 60)) { rt.an = S.wan || 'idle'; return; } }
+      if (S?.until) rt.an = S.an || 'reach';
+      rt.t -= dt * staffK(s, S?.skill || j?.skill);
+      if (S?.sfx && Math.random() < dt * 2) this.sfx(S.sfx, rt.x, rt.z);
       if (rt.t > 0) return;
-      const j = rt.job; rt.job = null; rt.st = 'idle'; rt.t = 0.15; rt.an = 'idle';
+      if (j?.steps) {
+        let ok = true;
+        try { ok = S.run ? S.run() !== false : true; } catch (e) { console.warn('staff step', j.kind, e); ok = false; }
+        if (!ok) { this.cancelJob(s, rt); return; }
+        j.si++;
+        if (j.si < j.steps.length) {
+          const N = j.steps[j.si];
+          if (this._goSpot(rt, N.spot[0], N.spot[1])) { rt.st = 'walk'; rt.an = 'walk'; } else this.cancelJob(s, rt);
+          return;
+        }
+        if (j.l) j.l.cl = null;
+        rt.job = null; rt.st = 'idle'; rt.t = 0.15; rt.an = 'idle';
+        return;
+      }
+      rt.job = null; rt.st = 'idle'; rt.t = 0.15; rt.an = 'idle';
       if (j) this.jobDone(s, rt, j, who);
       return;
     }
@@ -1494,11 +1677,16 @@ export class Sim {
     rt.t = 0.6;
     const j = this.findJob(s, rt, who);
     if (!j) { rt.msg = null; return; }
+    if (j.steps) j.si = 0;
     rt.job = j;
-    const [x, z] = j.spot;
-    if (dist(rt.x, rt.z, x, z) < 0.3 || this.goto(rt, x, z)) { rt.st = 'walk'; if (!rt.path) rt.path = [[x, z]]; }
+    const [x, z] = this.curStep(j).spot;
+    if (this._goSpot(rt, x, z)) { rt.st = 'walk'; if (!rt.path) rt.path = [[x, z]]; }
     else { rt.job = null; this.unclaim(s); }
   }
+  curStep(j) { return j.steps ? j.steps[j.si || 0] : j; }
+  _goSpot(rt, x, z) { if (dist(rt.x, rt.z, x, z) < 0.3) { rt.path = [[x, z]]; rt.pi = 0; return true; } return this.goto(rt, x, z); }
+  // 設備の前に行って作業する工程
+  _at(f, o = {}) { return { fid: f.id, spot: frontSpot(f, 0.5), face: [f.x, f.z], dur: 0.5, skill: 'cook', ...o }; }
   // ---------- アルバイトの泥棒退治（「警備」の役割の人だけ） ----------
   // 泥棒がレジに近づいたり、こじ開けたり逃げたりしているとき、警備のアルバイトが向かう。
   // 手裏剣ケースがあれば手裏剣を取って投げ、なければ走って取り押さえる
@@ -1595,8 +1783,13 @@ export class Sim {
     return true;
   }
   unclaim(s) { for (const c of this.dyn.customers) for (const l of c.lines || []) if (l.cl === s.id) l.cl = null; }
-  cancelJob(s, rt) { this.unclaim(s); rt.job = null; rt.st = 'idle'; rt.t = 0.5; rt.path = null; }
-  jobValid(s, j) { const f = j.fid != null ? this.fx(j.fid) : null; if (j.fid != null && (!f || f.br)) return false; if (j.c && !['seated', 'eat'].includes(j.c.st)) return false; return true; }
+  cancelJob(s, rt) { this.unclaim(s); rt.job = null; rt.st = 'idle'; rt.t = 0.5; rt.path = null; rt.wait = 0; }
+  jobValid(s, j) {
+    const S = this.curStep(j), f = S.fid != null ? this.fx(S.fid) : null;
+    if (S.fid != null && (!f || f.br)) return false;
+    if (!j.steps && j.c && !['seated', 'eat'].includes(j.c.st)) return false;
+    return true;
+  }
   findJob(s, rt, who) {
     const st = this.store, role = s.role, hd = this.hand(who);
     const F = (pred) => { let b = null, bd = 1e9; for (const f of st.fixtures) { if (f.br || !pred(f)) continue; const d = dist2(rt.x, rt.z, f.x, f.z); if (d < bd) { bd = d; b = f; } } return b; };
@@ -1605,12 +1798,16 @@ export class Sim {
     if (hd?.t === 'dish') {
       const tgt = this.matchCustomer(hd.d, hd.d.for);
       if (tgt) { const f = this.fx(tgt.c.seat[0]); return { kind: 'serve', fid: f.id, c: tgt.c, spot: seatAccess(f, tgt.c.seat[1]), face: [tgt.c.x, tgt.c.z], dur: 0.6, skill: 'hall' }; }
-      const ps = F((f) => f.ps && f.ps.some((x) => !x));
+      if (dishEmpty(hd.d)) { const rk = F((f) => FIXTURES[f.t].rack); if (rk) return job('dishback', rk, 0.4, 'hall'); }
+      const done = hd.d.k === 'bowl' ? !!hd.d.soup && hd.d.men != null : hd.d.k === 'mug' ? (hd.d.fill || 0) > 0.6 : !!hd.d.side;
+      const ps = done && F((f) => f.ps && f.ps.some((x) => !x));
       if (ps) return job('passput', ps, 0.4, 'hall');
       return job('trash', F((f) => f.t === 'trash'), 0.4, 'hall');
     }
     if (hd?.t === 'dirty') { const sk = F((f) => FIXTURES[f.t].sink); return sk ? job('sinkput', sk, 0.5, 'hall') : null; }
     if (hd?.t === 'clean') { const rk = F((f) => FIXTURES[f.t].rack); return rk ? job('rackput', rk, 0.5, 'hall') : null; }
+    if (hd?.t === 'ing') { const fr = F((f) => FIXTURES[f.t].cap); if (fr) return job('ingback', fr, 0.4, 'cook'); this.dropHand(who); return null; }
+    if (hd?.t === 'pot') { const pf = this.fx(hd.fid); if (pf && !pf.br) return job('potback', pf, 0.5, 'cook'); this.dropHand(who); return null; }
     if (hd) { this.setHand(who, null); return null; }
     // 警備：ほかの仕事はせず、レジの前で見張る
     if (role === 'guard') {
@@ -1620,7 +1817,7 @@ export class Sim {
     // 空焚き（だしが空のまま火がついている）は、だれでも先に火を止める
     const dryPot = F((f) => f.pot && !(f.pot.w > 0) && f.pot.fire && !st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.kind === 'fireoff' && this.dyn.staffRt[o.id].job.fid === f.id));
     if (dryPot) return job('fireoff', dryPot, 0.5, 'cook');
-    const cookJobs = () => this.findCookJob(s, rt, F, job);
+    const cookJobs = () => this.findCookJob(s, rt, F, who);
     const hallJobs = () => {
       // 受け渡し台の料理を運ぶ
       for (const f of st.fixtures) {
@@ -1656,130 +1853,177 @@ export class Sim {
     const order = role === 'cook' ? [cookJobs] : role === 'hall' ? [hallJobs, washJob] : role === 'wash' ? [washJob, hallJobs] : [cookJobs, hallJobs, washJob];
     for (const fn of order) { const j = fn(); if (j) return j; }
     // 手が空いたら仕込みの手伝い（おまかせ）
-    if (role === 'auto') return this.findPrepJob(s, F, job, 4);
+    if (role === 'auto') return this.findPrepJob(s, F, who, 4);
     return null;
   }
-  findCookJob(s, rt, F, job) {
-    const st = this.store, clk = this.clk;
-    const busyF = (fid) => st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.fid === fid);
+  // ほかのアルバイトがやっている仕事
+  _othersJob(s, pred) { return this.store.staff.some((o) => { if (o === s) return false; const j = this.dyn.staffRt[o.id]?.job; return !!j && pred(j); }); }
+  findCookJob(s, rt, F, who) {
+    const st = this.store, clk = this.clk, D = (f) => FIXTURES[f.t];
+    const busyF = (fid) => this._othersJob(s, (j) => j.fid === fid);
+    const fridge = F((f) => D(f).cap);
     const pend = this.pendingLines();
     // トッピングが切れそうなら先に仕込む
-    if (pend.length) { const pj = this.findPrepJob(s, F, job, 2); if (pj) return pj; }
+    if (pend.length) { const pj = this.findPrepJob(s, F, who, 2); if (pj) return pj; }
     for (const { c, l } of pend) {
       if (l.k === 'ramen') {
         const m = st.menu.find((x) => x.id === l.m); if (!m) continue;
         const S = SOUPS[m.soup], pot = F((f) => potReady(f, clk) && f.pot.b === S.broth);
-        const boiler = F((f) => FIXTURES[f.t].baskets);
-        if (!pot || !boiler || !((st.stock.men || 0) > 0) || !((st.dish.bowl || 0) > 0) || !((st.tare[S.tare] || 0) > 0)) continue;
-        l.cl = s.id;
-        return job('ramen', boiler, 10, 'cook', { c, l, pot: pot.id, an: 'stir', sfx: 'boil' });
+        const boiler = F((f) => D(f).baskets && f.bk.some((x) => !x));
+        if (!fridge || !pot || !boiler || !((st.stock.men || 0) > 0) || !((st.dish.bowl || 0) > 0) || !((st.tare[S.tare] || 0) > 0)) continue;
+        const j = this._ramenChain(s, who, c, l, m, pot, boiler, F); if (!j) continue;
+        l.cl = s.id; return j;
       }
       const S = SIDES[l.k]; if (!S || !((st.dish[S.dish] || 0) > 0)) continue;
+      const rack = F((f) => D(f).rack); if (!rack) continue;
       if (l.k === 'rice' || l.k === 'chadon') {
         const rc = F((f) => f.t === 'rice' && f.rc && f.rc.sv > 0 && clk - f.rc.t0 >= RICE_READY);
-        if (!rc || (l.k === 'chadon' && !((st.prep.chashu || 0) > 0))) continue;
-        l.cl = s.id; return job('side', rc, 2.5, 'cook', { c, l });
+        const top = F((f) => D(f).topping);
+        if (!rc || (l.k === 'chadon' && (!top || !((st.prep.chashu || 0) > 0)))) continue;
+        l.cl = s.id; return this._riceServeChain(who, c, l, rack, rc, l.k === 'chadon' ? top : null);
       }
       if (l.k === 'beer') {
-        const b = F((f) => f.t === 'beer'); if (!b || !((st.prep.beer || 0) > 0 || (st.stock.taru || 0) > 0)) continue;
-        l.cl = s.id; return job('side', b, 3, 'cook', { c, l, sfx: 'pour' });
+        const b = F((f) => f.t === 'beer'); if (!b || !((st.prep.beer || 0) > 0)) continue;
+        l.cl = s.id; return this._beerChain(s, who, c, l, rack, b);
       }
       const G = GRIDDLE[l.k];
       if (G) {
-        const g = F((f) => FIXTURES[f.t].griddle === l.k && !f.gr && !busyF(f.id)); if (!g || (st.stock[G.item] || 0) < G.use) continue;
-        l.cl = s.id; return job('side', g, (G.ideal[0] + G.ideal[1]) / 2, 'cook', { c, l, an: 'stir', sfx: 'sizzle' });
+        const g = F((f) => D(f).griddle === l.k && !f.gr && !busyF(f.id)); if (!g || !fridge || (st.stock[G.item] || 0) < G.use) continue;
+        l.cl = s.id; return this._grillChain(s, who, c, l, fridge, g, rack, G);
       }
     }
     // だしを炊く・アクを取る・タレを作る（注文が多いスープ → メニューのスープ）
     const want = [...new Set([...pend.filter((p) => p.l.k === 'ramen').map((p) => st.menu.find((m) => m.id === p.l.m)?.soup), ...st.menu.filter((m) => m.kind === 'ramen' && m.on).map((m) => m.soup)].filter((k) => SOUPS[k]))];
-    const aku = F((f) => f.pot?.b && potAku(f.pot, clk) > 0.45 && !busyF(f.id)); if (aku) return job('skim', aku, 2.5, 'cook', { an: 'stir', sfx: 'pour' });
+    const aku = F((f) => f.pot?.b && potAku(f.pot, clk) > 0.45 && !busyF(f.id)); if (aku) return { kind: 'skim', fid: aku.id, spot: frontSpot(aku, 0.5), face: [aku.x, aku.z], dur: 2.5, skill: 'cook', an: 'stir', sfx: 'pour' };
     for (const b of [...new Set(want.map((k) => SOUPS[k].broth))]) {
       if (st.fixtures.some((f) => f.pot?.b === b && (f.pot.sv > 3 || !potReady(f, clk)) && !f.br)) continue;
-      if (!((st.stock[BROTHS[b].item] || 0) > 0)) continue;
-      const pot = F((f) => FIXTURES[f.t].pot && (!f.pot || !f.pot.b || f.pot.sv <= 0) && !busyF(f.id));
-      if (pot) return job('soup', pot, 4, 'cook', { b, an: 'stir' });
+      if (this._othersJob(s, (j) => j.kind === 'soup' && j.b === b)) continue;
+      if (!((st.stock[BROTHS[b].item] || 0) > 0) || !fridge) continue;
+      const pot = F((f) => D(f).pot && !f.away && (!f.pot || !f.pot.b || f.pot.sv <= 0) && !busyF(f.id));
+      const sink = F((f) => D(f).sink);
+      if (pot && sink) return this._soupChain(s, who, pot, sink, fridge, b);
     }
     for (const t of [...new Set(want.map((k) => SOUPS[k].tare))]) {
-      const T = TARES[t]; if ((st.tare[t] || 0) >= 5 || !((st.stock[T.raw] || 0) > 0) || this.level < T.lv) continue;
-      if (st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.kind === 'tare')) continue;
-      const tb = F((f) => FIXTURES[f.t].topping && !f.tj && !busyF(f.id)); if (tb) return job('tare', tb, TARE_MIX * 1.6, 'cook', { k: t, an: 'stir', sfx: 'pour' });
+      const T = TARES[t]; if ((st.tare[t] || 0) >= 5 || !((st.stock[T.raw] || 0) > 0) || this.level < T.lv || !fridge) continue;
+      if (this._othersJob(s, (j) => j.kind === 'tare')) continue;
+      const tb = F((f) => D(f).topping && !f.tj && !busyF(f.id)); if (tb) return this._tareChain(who, fridge, tb, T);
     }
-    // ごはんを炊く
-    if (st.menu.some((m) => m.on && (m.side === 'rice' || m.side === 'chadon')) && (st.stock.kome || 0) > 0) {
-      const rc = F((f) => f.t === 'rice' && !f.rc && !busyF(f.id)); if (rc) return job('riceStart', rc, 1.5, 'cook');
+    // ビール樽をつなぐ
+    if (fridge && st.menu.some((m) => m.on && m.side === 'beer') && !((st.prep.beer || 0) > 0) && (st.stock.taru || 0) > 0 && !this._othersJob(s, (j) => j.kind === 'keg')) {
+      const b = F((f) => f.t === 'beer'); if (b) return { kind: 'keg', fid: b.id, skill: 'cook', steps: [this._at(fridge, { run: () => { this.act(who, { t: 'ingTake', fid: fridge.id, k: 'taru' }); return !!this.ingHeld(who, (k) => k === 'taru'); } }), this._at(b, { dur: 1.2, run: () => { this.act(who, { t: 'kegSet', fid: b.id }); return !this.hand(who); } })] };
     }
-    // 空焚きを止める
-    const dry = F((f) => f.pot && !(f.pot.w > 0) && f.pot.fire); if (dry) return job('fireoff', dry, 0.5, 'cook');
-    return this.findPrepJob(s, F, job, 8);
+    // ごはんを炊く（冷蔵庫の米 → 洗い場で研ぐ → 炊飯器）
+    if (fridge && st.menu.some((m) => m.on && (m.side === 'rice' || m.side === 'chadon')) && (st.stock.kome || 0) > 0) {
+      const rc = F((f) => f.t === 'rice' && !f.rc && !busyF(f.id)), sink = F((f) => D(f).sink);
+      if (rc && sink) return { kind: 'riceStart', fid: rc.id, skill: 'cook', steps: [
+        this._at(fridge, { run: () => { this.act(who, { t: 'ingTake', fid: fridge.id, k: 'kome' }); return !!this.ingHeld(who, (k) => k === 'kome'); } }),
+        this._at(sink, { dur: RICE_WASH_T * 1.2, an: 'wash', sfx: 'wash', run: () => { const hd = this.ingHeld(who, (k) => k === 'kome'); if (!hd) return false; hd.ws = 1; this.bump(); return true; } }),
+        this._at(rc, { dur: 0.8, run: () => { this.act(who, { t: 'riceStart', fid: rc.id }); return !this.hand(who); } }),
+      ] };
+    }
+    return this.findPrepJob(s, F, who, 8);
   }
-  findPrepJob(s, F, job, low) {
-    const st = this.store;
+  // だしを炊く：（火を止めて）空の鍋を持つ → 洗い場で洗って水を張る → コンロに戻す → 冷蔵庫の骨を入れる → 香味野菜を入れる → 火をつける
+  _soupChain(s, who, pot, sink, fridge, b) {
+    const st = this.store, B = BROTHS[b], def = FIXTURES[pot.t], act = (a) => this.act(who, a), steps = [];
+    const at = (f, o) => this._at(f, o);
+    if (!(pot.pot?.w > 0)) {
+      if (pot.pot?.fire) steps.push(at(pot, { dur: 0.4, run: () => { if (pot.pot?.fire) act({ t: 'fire', fid: pot.id }); return !pot.pot?.fire; } }));
+      steps.push(at(pot, { dur: 0.6, run: () => { act({ t: 'potLift', fid: pot.id }); return this.hand(who)?.t === 'pot'; } }));
+      steps.push(at(sink, { dur: POT_RINSE_T + (POT_FILL_T[pot.t] || 3.2), an: 'wash', sfx: 'pour', run: () => { const hd = this.hand(who); if (hd?.t !== 'pot') return false; hd.dirty = 0; hd.cl = 1; hd.w = 1; this.bump(); return true; } }));
+      steps.push(at(pot, { dur: 0.7, run: () => { act({ t: 'potSet', fid: pot.id }); return !this.hand(who) && pot.pot?.w > 0; } }));
+    }
+    const n = Math.max(1, Math.min(def.pot.sv / POT_PER, st.stock[B.item] || 0));
+    steps.push(at(fridge, { run: () => { for (let i = 0; i < n; i++) act({ t: 'ingTake', fid: fridge.id, k: B.item }); return !!this.ingHeld(who, (k) => k === B.item); } }));
+    steps.push(at(pot, { dur: 0.5 + 0.4 * n, an: 'stir', run: () => { const hd = this.ingHeld(who, (k) => k === B.item); if (!hd) return false; for (let i = hd.n; i > 0; i--) act({ t: 'potAdd', fid: pot.id }); if (this.hand(who)) this.dropHand(who); return !!pot.pot?.b; } }));
+    if ((st.stock.yasai || 0) > 0 && ingUnlocked('yasai', this.level)) {
+      steps.push(at(fridge, { run: () => { if ((st.stock.yasai || 0) > 0) act({ t: 'ingTake', fid: fridge.id, k: 'yasai' }); return true; } }));
+      steps.push(at(pot, { dur: 0.6, an: 'stir', run: () => { if (this.ingHeld(who, (k) => k === 'yasai')) act({ t: 'potAdd', fid: pot.id }); if (this.hand(who)) this.dropHand(who); return true; } }));
+    }
+    steps.push(at(pot, { dur: 0.4, run: () => { if (pot.pot?.b && !pot.pot.fire) act({ t: 'fire', fid: pot.id }); return true; } }));
+    return { kind: 'soup', fid: pot.id, b, skill: 'cook', steps };
+  }
+  // ラーメン1杯：冷蔵庫の麺 → てぼに入れる → 丼を取る → タレ → だしを注ぐ → 茹で上がりを待って湯切り → トッピング
+  _ramenChain(s, who, c, l, m, pot, boiler, F) {
+    const D = (f) => FIXTURES[f.t], fridge = F((f) => D(f).cap), rack = F((f) => D(f).rack), top = F((f) => D(f).topping);
+    if (!fridge || !rack || !top) return null;
+    const S = SOUPS[m.soup], H = HARD[l.h] || HARD.futsu, k = staffK(s, 'cook'), act = (a) => this.act(who, a), at = (f, o) => this._at(f, o);
+    const target = (H.t[0] + H.t[1]) / 2 + rand(-3.5, 3.5) / Math.max(0.5, k);
+    let bi = -1;
+    const mine = () => { const b = boiler.bk[bi]; return b && b.by === who ? b : null; };
+    const steps = [
+      at(fridge, { run: () => { act({ t: 'ingTake', fid: fridge.id, k: 'men' }); return !!this.ingHeld(who, (x) => x === 'men'); } }),
+      at(boiler, { dur: 0.5, run: () => { const b = boiler.bk.findIndex((x) => !x); if (b < 0) return false; bi = this.a_noodleIn(who, { fid: boiler.id, bi: b }) ?? -1; return !!mine(); } }),
+      at(rack, { dur: 0.5, run: () => { act({ t: 'take', fid: rack.id, k: 'bowl' }); return this.hand(who)?.t === 'dish'; } }),
+      at(top, { dur: 0.8, an: 'stir', run: () => { act({ t: 'tareIn', fid: top.id, k: S.tare }); return !!this.hand(who)?.d?.tare; } }),
+      at(pot, { dur: 0.9, an: 'stir', sfx: 'pour', run: () => { if (!potReady(pot, this.clk) || pot.pot.b !== S.broth) return false; act({ t: 'soupPour', fid: pot.id }); const d = this.hand(who)?.d; if (!d?.broth) return false; d.sq = +(d.sq * clamp(0.85 + k * 0.08, 0.85, 1)).toFixed(3); return true; } }),
+      at(boiler, { dur: DRAIN_T * 1.2, an: 'yugiri', sfx: 'yugiri', wan: 'idle', max: 70, until: () => { const b = mine(); return !b || this.clk - b.t0 >= target - DRAIN_T; }, run: () => { if (!mine() || this.hand(who)?.t !== 'dish') return false; this._noodleInto(who, boiler, bi, clamp(rand(0, 0.12) / k, 0, 0.3)); return this.hand(who)?.d?.men != null; } }),
+      at(top, { dur: 0.5 + m.tp.length * 0.35, an: 'stir', run: () => { for (const t of m.tp) act({ t: 'top', fid: top.id, tid: t }); const d = this.hand(who)?.d; if (d) d.for = { c: c.id, l: c.lines.indexOf(l) }; return !!d; } }),
+    ];
+    return { kind: 'ramen', fid: boiler.id, l, skill: 'cook', steps };
+  }
+  _riceServeChain(who, c, l, rack, rc, top) {
+    const act = (a) => this.act(who, a), at = (f, o) => this._at(f, o);
+    const steps = [
+      at(rack, { run: () => { act({ t: 'take', fid: rack.id, k: 'bowlS' }); return this.hand(who)?.t === 'dish'; } }),
+      at(rc, { dur: 1.2, run: () => { act({ t: 'riceServe', fid: rc.id }); const d = this.hand(who)?.d; if (d) d.q = 90; return d?.side === 'rice'; } }),
+    ];
+    if (top) steps.push(at(top, { dur: 0.6, run: () => { act({ t: 'top', fid: top.id, tid: 'chashu' }); return true; } }));
+    steps[steps.length - 1] = { ...steps[steps.length - 1], run: ((r) => () => { const ok = r(); const d = this.hand(who)?.d; if (d) d.for = { c: c.id, l: c.lines.indexOf(l) }; return ok; })(steps[steps.length - 1].run) };
+    return { kind: 'side', fid: rc.id, l, skill: 'cook', steps };
+  }
+  _beerChain(s, who, c, l, rack, b) {
+    const act = (a) => this.act(who, a), at = (f, o) => this._at(f, o), k = staffK(s, 'cook');
+    return { kind: 'side', fid: b.id, l, skill: 'cook', steps: [
+      at(rack, { run: () => { act({ t: 'take', fid: rack.id, k: 'mug' }); return this.hand(who)?.t === 'dish'; } }),
+      at(b, { dur: 2.6, sfx: 'pour', run: () => { act({ t: 'pour', fid: b.id, dur: 0.1 }); const d = this.hand(who)?.d; if (d?.side !== 'beer') return false; d.fill = clamp(0.93 + rand(-0.09, 0.09) / Math.max(0.5, k), 0.7, 1.15); d.for = { c: c.id, l: c.lines.indexOf(l) }; this.bump(); return true; } }),
+    ] };
+  }
+  // 餃子・唐揚げ：冷蔵庫から運ぶ → 焼き始める → 皿を取ってくる → ちょうどいい時に盛る
+  _grillChain(s, who, c, l, fridge, g, rack, G) {
+    const act = (a) => this.act(who, a), at = (f, o) => this._at(f, o), k = staffK(s, 'cook');
+    const target = (G.ideal[0] + G.ideal[1]) / 2 + rand(-4, 4) / Math.max(0.5, k);
+    return { kind: 'side', fid: g.id, l, skill: 'cook', steps: [
+      at(fridge, { run: () => { act({ t: 'ingTake', fid: fridge.id, k: G.item }); return !!this.ingHeld(who, (x) => x === G.item); } }),
+      at(g, { dur: 0.8, run: () => { act({ t: 'grillStart', fid: g.id }); return !!g.gr && !this.hand(who); } }),
+      at(rack, { run: () => { act({ t: 'take', fid: rack.id, k: 'plate' }); return this.hand(who)?.t === 'dish'; } }),
+      at(g, { dur: 0.8, an: 'stir', wan: 'idle', max: 50, until: () => !g.gr || this.clk - g.gr.t0 >= target, run: () => { if (!g.gr) return false; act({ t: 'grillTake', fid: g.id }); const d = this.hand(who)?.d; if (!d?.side) return false; d.for = { c: c.id, l: c.lines.indexOf(l) }; return true; } }),
+    ] };
+  }
+  // タレ：冷蔵庫の材料 → トッピング台で開けて混ぜる
+  _tareChain(who, fridge, tb, T) {
+    const act = (a) => this.act(who, a), at = (f, o) => this._at(f, o), st = this.store;
+    return { kind: 'tare', fid: tb.id, skill: 'cook', steps: [
+      at(fridge, { run: () => { act({ t: 'ingTake', fid: fridge.id, k: T.raw }); return !!this.ingHeld(who, (k) => k === T.raw); } }),
+      at(tb, { dur: 0.6, run: () => { act({ t: 'tareStart', fid: tb.id }); return !!tb.tj; } }),
+      at(tb, { dur: TARE_MIX * 1.5, an: 'stir', sfx: 'pour', run: () => { if (!tb.tj) return false; st.tare[tb.tj.k] = (st.tare[tb.tj.k] || 0) + TARES[tb.tj.k].per; tb.tj = null; this.sfx('ding', tb.x, tb.z); this.bump(); return true; } }),
+    ] };
+  }
+  // トッピングの仕込み：冷蔵庫の食材 → まな板にのせる → 切る
+  findPrepJob(s, F, who, low) {
+    const st = this.store, fridge = F((f) => FIXTURES[f.t].cap); if (!fridge) return null;
     const need = new Set(st.menu.filter((m) => m.on && m.kind === 'ramen').flatMap((m) => m.tp));
     if (st.menu.some((m) => m.on && m.side === 'chadon')) need.add('chashu');
     for (const tid of need) {
       const T = TOPPINGS[tid]; if (!T || (st.prep[tid] || 0) >= low || !((st.stock[T.raw] || 0) > 0)) continue;
-      if (st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.tid === tid)) continue;
-      const b = F((f) => FIXTURES[f.t].board && !f.job && !st.staff.some((o) => o !== s && this.dyn.staffRt[o.id]?.job?.fid === f.id));
-      if (b) return job('prep', b, T.prep * 1.6, 'cook', { tid, an: 'chop', sfx: 'chop' });
+      if (this._othersJob(s, (j) => j.tid === tid)) continue;
+      const b = F((f) => FIXTURES[f.t].board && !f.job && !this._othersJob(s, (j) => j.fid === f.id));
+      if (!b) continue;
+      const act = (a) => this.act(who, a), at = (f, o) => this._at(f, o);
+      return { kind: 'prep', fid: b.id, tid, skill: 'cook', steps: [
+        at(fridge, { run: () => { act({ t: 'ingTake', fid: fridge.id, k: T.raw }); return !!this.ingHeld(who, (k) => k === T.raw); } }),
+        at(b, { dur: 0.5, run: () => { act({ t: 'boardPut', fid: b.id }); return b.job?.tid === tid; } }),
+        at(b, { dur: T.prep * 1.5, an: 'chop', sfx: 'chop', run: () => { if (b.job?.tid !== tid) return false; this.finishChop(b, who); this.bump(); return true; } }),
+      ] };
     }
     return null;
   }
-  jobStart(s, rt, j, who) {
-    const st = this.store;
-    if (j.kind === 'prep') { const T = TOPPINGS[j.tid]; if ((st.stock[T.raw] || 0) > 0) { st.stock[T.raw]--; if (!st.stock[T.raw]) delete st.stock[T.raw]; j.ok = 1; this.bump(); } }
-    if (j.kind === 'tare') { const T = TARES[j.k]; if ((st.stock[T.raw] || 0) > 0) { st.stock[T.raw]--; if (!st.stock[T.raw]) delete st.stock[T.raw]; j.ok = 1; this.bump(); } }
-    if (j.kind === 'side' && GRIDDLE[j.l.k]) { const G = GRIDDLE[j.l.k]; if ((st.stock[G.item] || 0) >= G.use) { st.stock[G.item] -= G.use; if (!st.stock[G.item]) delete st.stock[G.item]; j.ok = 1; this.bump(); } }
-    void who;
-  }
+  jobStart() { /* 1つの設備で終わる仕事は、着いたときに準備することはない */ }
   jobDone(s, rt, j, who) {
-    const st = this.store, clk = this.clk, f = this.fx(j.fid), k = staffK(s, j.skill);
-    const noise = (a) => rand(-a, a) / Math.max(0.5, k);
+    const st = this.store, clk = this.clk, f = this.fx(j.fid);
     switch (j.kind) {
-      case 'ramen': {
-        const m = st.menu.find((x) => x.id === j.l.m), pot = this.fx(j.pot);
-        const S = m && SOUPS[m.soup];
-        if (!m || !potReady(pot, clk) || pot.pot.b !== S.broth || !((st.stock.men || 0) > 0) || !((st.dish.bowl || 0) > 0) || !((st.tare[S.tare] || 0) > 0)) { j.l.cl = null; return; }
-        st.stock.men--; if (!st.stock.men) delete st.stock.men; st.dish.bowl--; st.tare[S.tare]--; if (!st.tare[S.tare]) delete st.tare[S.tare];
-        const sq0 = soupQuality(pot, clk); pot.pot.sv--; pot.pot.used = (pot.pot.used || 0) + 1; if (pot.pot.sv <= 0) { potCommit(pot.pot, clk); pot.pot.w = 0; if (pot.pot.fire) pot.pot.dry = clk; }
-        const H = HARD[j.l.h] || HARD.futsu, tp = [];
-        for (const t of m.tp) if ((st.prep[t] || 0) > 0) { st.prep[t]--; if (!st.prep[t]) delete st.prep[t]; tp.push(t); }
-        const d = { k: 'bowl', soup: m.soup, broth: S.broth, tare: S.tare, wet: 0, sq: sq0 * clamp(0.85 + k * 0.08, 0.85, 1), men: Math.round(((H.t[0] + H.t[1]) / 2 + noise(5)) * 10) / 10, tp, t: clk, for: { c: j.c.id, l: j.c.lines.indexOf(j.l) } };
-        j.l.cl = null;
-        this.setHand(who, { t: 'dish', d }); this.bump();
-        break;
-      }
-      case 'side': {
-        const S = SIDES[j.l.k]; if (!S || !((st.dish[S.dish] || 0) > 0)) { j.l.cl = null; return; }
-        const d = { k: S.dish, tp: [], t: clk, for: { c: j.c.id, l: j.c.lines.indexOf(j.l) } };
-        if (j.l.k === 'rice' || j.l.k === 'chadon') {
-          const rc = f?.rc; if (!rc || rc.sv <= 0) { j.l.cl = null; return; }
-          rc.sv--; if (rc.sv <= 0) f.rc = null;
-          d.side = 'rice'; d.q = 90;
-          if (j.l.k === 'chadon') { if ((st.prep.chashu || 0) > 0) { st.prep.chashu--; if (!st.prep.chashu) delete st.prep.chashu; d.tp.push('chashu'); } }
-        } else if (j.l.k === 'beer') {
-          if (!((st.prep.beer || 0) > 0)) { if ((st.stock.taru || 0) > 0) { st.stock.taru--; if (!st.stock.taru) delete st.stock.taru; st.prep.beer = 20; } else { j.l.cl = null; return; } }
-          st.prep.beer--; if (!st.prep.beer) delete st.prep.beer;
-          d.side = 'beer'; d.fill = clamp(0.93 + noise(0.09), 0.7, 1.15);
-        } else { if (!j.ok) { j.l.cl = null; return; } d.side = j.l.k; d.q = Math.round(clamp(78 + k * 9 + noise(10), 30, 100)); }
-        st.dish[S.dish]--; j.l.cl = null;
-        this.setHand(who, { t: 'dish', d }); this.bump();
-        break;
-      }
-      case 'soup': {
-        const B = BROTHS[j.b], def = FIXTURES[f?.t];
-        if (!f || !B || (f.pot?.b && f.pot.sv > 0) || !((st.stock[B.item] || 0) > 0)) return;
-        const n = Math.min(def.pot.sv / POT_PER, st.stock[B.item]), P = { w: 1, n: { [B.item]: n }, b: j.b, ha: 0, hs: clk, sk: 0, sv: 0, used: 0, fire: 1, off: clk, dry: null };
-        st.stock[B.item] -= n; if (!st.stock[B.item]) delete st.stock[B.item];
-        for (const x of ['yasai', ...(j.b !== 'ton' ? ['kombu'] : [])]) if ((st.stock[x] || 0) > 0 && ingUnlocked(x, this.level)) { st.stock[x]--; if (!st.stock[x]) delete st.stock[x]; P.n[x] = 1; }
-        P.sv = potServings(P, def); f.pot = P;
-        this.sfx('boil', f.x, f.z); this.bump();
-        break;
-      }
       case 'skim': if (f?.pot?.b) { const B = BROTHS[f.pot.b]; f.pot.sk = Math.min(1, AKU_RATE * Math.min(potHeat(f.pot, clk), B.ready + 70)) + (potHeat(f.pot, clk) < B.ready + 70 ? 0.2 : 0); this.bump(); } break;
-      case 'tare': if (j.ok) { const T = TARES[j.k]; st.tare[j.k] = (st.tare[j.k] || 0) + T.per; this.bump(); } break;
-      case 'riceStart': if (f && !f.rc && (st.stock.kome || 0) > 0) { st.stock.kome--; if (!st.stock.kome) delete st.stock.kome; f.rc = { t0: clk, sv: FIXTURES.rice.rice.sv }; this.bump(); } break;
-      case 'fireoff': if (f?.pot && !(f.pot.w > 0)) { f.pot = null; this.bump(); } break;
-      case 'prep': if (j.ok) { const T = TOPPINGS[j.tid]; st.prep[j.tid] = (st.prep[j.tid] || 0) + T.per; this.bump(); } break;
+      case 'fireoff': if (f?.pot && !(f.pot.w > 0) && f.pot.fire) this.act(who, { t: 'fire', fid: f.id }); break;
       case 'serve': {
         const hd = this.hand(who); if (hd?.t !== 'dish') return;
         if (!['seated', 'eat'].includes(j.c.st)) return;
@@ -1798,7 +2042,10 @@ export class Sim {
         const d = f.ps[j.pi]; f.ps[j.pi] = null; this.setHand(who, { t: 'dish', d }); this.bump();
         break;
       }
-      case 'trash': { const hd = this.hand(who); if (hd?.t === 'dish') { st.dirty[hd.d.k]++; this.setHand(who, null); this.bump(); } break; }
+      case 'trash': { const hd = this.hand(who); if (hd?.t === 'dish') { st.dirty[hd.d.k]++; this.setHand(who, null); this.sfx('trash', f?.x, f?.z); this.bump(); } break; }
+      case 'dishback': { const hd = this.hand(who); if (hd?.t === 'dish' && dishEmpty(hd.d)) { st.dish[hd.d.k]++; this.setHand(who, null); this.bump(); } break; }
+      case 'ingback': this.act(who, { t: 'ingBack', fid: j.fid }); if (this.hand(who)?.t === 'ing') this.dropHand(who); break;
+      case 'potback': this.dropHand(who); this.bump(); break;
       case 'clear': {
         if (!f?.dd?.[j.si]?.length) return;
         const stack = { t: 'dirty', a: f.dd[j.si].splice(0, DIRTY_MAX) };
@@ -1868,7 +2115,7 @@ export class Sim {
       th: T ? [+T.x.toFixed(2), +T.z.toFixed(2), +T.ry.toFixed(2), T.an, T.bub || '', T.st, T.seed] : null,
       f: d.fires.map((x) => [x.fid, +x.v.toFixed(1)]),
       p: d.proj.map((p) => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), p.y]),
-      ch: { ph: C.ph, t: +C.t.toFixed(1), d: C.ph === 'bet' || C.ph === 'roll' ? null : C.d, b: Object.fromEntries(Object.entries(C.bets).map(([k, v]) => [k, [v.s, v.a, v.n]])), n: C.n, h: C.hist },
+      ch: { ph: C.ph, t: +C.t.toFixed(1), d: C.ph === 'show' ? C.d : null, b: Object.fromEntries(Object.entries(C.bets).map(([k, v]) => [k, [v.s, v.a, v.n]])), n: C.n, h: C.hist },
       dl: d.deliveries.map((x) => +x.t.toFixed(1)),
     };
   }
