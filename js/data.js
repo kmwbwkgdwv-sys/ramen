@@ -86,16 +86,40 @@ export function getWalls(store) {
 
 // ---------- スープ・麺・トッピング・サイド ----------
 // スープ：寸胴鍋に「スープの材料」を1回分入れて炊く（1回で寸胴鍋の大きさぶんの杯数）
+// ラーメンのスープ ＝ 寸胴鍋で炊いた「だし（ブロス）」＋ 丼に先に入れる「タレ（かえし）」
 export const SOUPS = {
-  shoyu: { name: '醤油', icon: '🟤', color: '#7a4422', lv: 1, add: 0, set: 's_shoyu', desc: '鶏ガラと醤油ダレのすっきり系' },
-  shio: { name: '塩', icon: '⚪', color: '#e3cf8f', lv: 3, add: 0, set: 's_shio', desc: '透きとおった鶏ガラ塩スープ' },
-  miso: { name: '味噌', icon: '🟠', color: '#c27a2c', lv: 6, add: 100, set: 's_miso', desc: '炒めた野菜と合わせ味噌' },
-  tonkotsu: { name: '豚骨', icon: '🥛', color: '#efe3cb', lv: 10, add: 150, set: 's_tonkotsu', desc: '豚骨を強火で炊いた白濁スープ' },
-  iekei: { name: '家系', icon: '🟡', color: '#d6a868', lv: 16, add: 200, set: 's_iekei', desc: '豚骨醤油に鶏油（チーユ）' },
-  tantan: { name: '担々', icon: '🔴', color: '#c13a22', lv: 22, add: 250, set: 's_tantan', desc: 'ごまと辣油のピリ辛スープ' },
-  niboshi: { name: '煮干し', icon: '🐟', color: '#9b8462', lv: 30, add: 200, set: 's_niboshi', desc: '煮干しをたっぷり使った魚介系' },
-  black: { name: '富山ブラック', icon: '⚫', color: '#2b1a10', lv: 40, add: 300, set: 's_black', desc: '真っ黒な濃口醤油スープ' },
+  shoyu: { name: '醤油', icon: '🟤', color: '#7a4422', lv: 1, add: 0, broth: 'tori', tare: 'shoyu', desc: '鶏ガラスープ＋醤油ダレのすっきり系' },
+  shio: { name: '塩', icon: '⚪', color: '#e3cf8f', lv: 3, add: 0, broth: 'tori', tare: 'shio', desc: '鶏ガラスープ＋塩ダレの透きとおったスープ' },
+  miso: { name: '味噌', icon: '🟠', color: '#c27a2c', lv: 6, add: 100, broth: 'tori', tare: 'miso', desc: '鶏ガラスープ＋味噌ダレ' },
+  tonkotsu: { name: '豚骨', icon: '🥛', color: '#efe3cb', lv: 10, add: 150, broth: 'ton', tare: 'shio', desc: '豚骨スープ＋塩ダレの白濁スープ' },
+  iekei: { name: '家系', icon: '🟡', color: '#d6a868', lv: 16, add: 200, broth: 'ton', tare: 'shoyu', desc: '豚骨スープ＋醤油ダレ（豚骨醤油）' },
+  tantan: { name: '担々', icon: '🔴', color: '#c13a22', lv: 22, add: 250, broth: 'tori', tare: 'goma', desc: '鶏ガラスープ＋ごまとラー油の担々ダレ' },
+  niboshi: { name: '煮干し', icon: '🐟', color: '#9b8462', lv: 30, add: 200, broth: 'nibo', tare: 'shoyu', desc: '煮干しスープ＋醤油ダレの魚介系' },
+  black: { name: '富山ブラック', icon: '⚫', color: '#2b1a10', lv: 40, add: 300, broth: 'tori', tare: 'black', desc: '鶏ガラスープ＋真っ黒な黒醤油ダレ' },
 };
+// だし（寸胴鍋で炊く）。水を入れて、骨などの材料と香味野菜を入れて火にかける。アクを取るとすっきりする
+export const BROTHS = {
+  tori: { name: '鶏ガラスープ', short: '鶏ガラ', icon: '🐔', item: 'torigara', color: '#e9cf86', lv: 1, ready: 30, rich: 110, tex: 'shio', desc: '30秒で使える。2分近く炊くとコクが出る' },
+  ton: { name: '豚骨スープ', short: '豚骨', icon: '🐷', item: 'tonkotsuB', color: '#efe3cb', lv: 10, ready: 50, rich: 170, tex: 'tonkotsu', desc: '強火で50秒。長く炊くほど白く濃くなる' },
+  nibo: { name: '煮干しスープ', short: '煮干し', icon: '🐟', item: 'niboshiG', color: '#b39a72', lv: 30, ready: 25, rich: 80, bitter: 200, tex: 'niboshi', desc: '25秒で使える。炊きすぎると苦くなる' },
+};
+export const BROTH_EXTRA = { yasai: 0.08, kombu: 0.06 }; // 合わせると味がよくなる（品質＋）
+export const POT_PER = 10;    // 骨などの材料1つで10杯分
+export const AKU_RATE = 0.024; // 炊きはじめはアクが出る（1秒あたり）
+// タレ（かえし）。トッピング台で材料から作っておき、丼に先に入れる
+export const TARES = {
+  shoyu: { name: '醤油ダレ（かえし）', short: '醤油ダレ', icon: '🟤', color: '#3a1c0b', lv: 1, raw: 't_shoyu', per: 30 },
+  shio: { name: '塩ダレ', short: '塩ダレ', icon: '⚪', color: '#efe6cf', lv: 3, raw: 't_shio', per: 30 },
+  miso: { name: '味噌ダレ', short: '味噌ダレ', icon: '🟠', color: '#a35d1c', lv: 6, raw: 't_miso', per: 20 },
+  goma: { name: '担々ダレ', short: '担々ダレ', icon: '🔴', color: '#a8361a', lv: 22, raw: 't_goma', per: 20 },
+  black: { name: '黒醤油ダレ', short: '黒醤油ダレ', icon: '⚫', color: '#140b06', lv: 40, raw: 't_black', per: 30 },
+};
+export const TARE_MIX = 2.4;  // タレを作る長押しの秒数
+// だし＋タレ → どのスープになるか
+export const soupOf = (b, t) => (b && t ? Object.keys(SOUPS).find((k) => SOUPS[k].broth === b && SOUPS[k].tare === t) || null : null);
+export const soupRecipe = (k) => (SOUPS[k] ? `${BROTHS[SOUPS[k].broth].short}スープ＋${TARES[SOUPS[k].tare].short}` : '');
+// 古いセーブの「スープの材料」→ 新しい材料
+export const OLD_SOUP_SETS = { s_shoyu: 'shoyu', s_shio: 'shio', s_miso: 'miso', s_tonkotsu: 'tonkotsu', s_iekei: 'iekei', s_tantan: 'tantan', s_niboshi: 'niboshi', s_black: 'black' };
 export const SOUP_READY = 30;   // 炊き始めて30秒で使える
 export const SOUP_RICH = 120;   // 120秒までコクが増える
 // 麺のかたさ：てぼを茹で麺機に入れてからの秒数
@@ -146,15 +170,29 @@ export const RICE_READY = 25;
 export const DISHES = {
   bowl: { name: 'ラーメン丼', icon: '🍜' }, bowlS: { name: '小丼', icon: '🍚' }, plate: { name: '皿', icon: '🍽️' }, mug: { name: 'ジョッキ', icon: '🍺' },
 };
+export const DRY_MAX = 12;   // 水切りかごに並べられる数
+export const WASH_T = 1.3;  // 食器1つを洗う長押しの秒数
+export const DRAIN_T = 1.1; // 湯切りの長押しの秒数
+export const CASH_CHOICES = [1000, 3000, 5000, 10000, 30000, 100000];
+export const FLOAT_CASH = 10000; // 朝のレジに入れておく釣り銭
 export const DIRTY_MAX = 5; // 下げた食器を重ねて持てる数
 
 // ---------- 仕入れ（食材・器） ----------
 // pack：1回の注文で届く数（unit） / cost：1パックの値段 / space：冷蔵庫の場所（パック数で数える）
 const I = (o) => ({ space: 1, ...o });
-export const ING_CATS = { base: { name: '麺・スープ', icon: '🍜' }, top: { name: 'トッピング', icon: '🥢' }, side: { name: 'サイド', icon: '🥟' }, dish: { name: '器', icon: '🍽️' } };
+export const ING_CATS = { base: { name: '麺', icon: '🍜' }, soup: { name: 'スープの材料', icon: '🍲' }, tare: { name: 'タレの材料', icon: '🫙' }, top: { name: 'トッピング', icon: '🥢' }, side: { name: 'サイド', icon: '🥟' }, dish: { name: '器', icon: '🍽️' } };
 export const INGREDIENTS = {
   men: I({ name: '生麺', icon: '🍜', cat: 'base', unit: '玉', pack: 20, cost: 1600, lv: 1 }),
-  ...Object.fromEntries(Object.entries(SOUPS).map(([k, s]) => [s.set, I({ name: `${s.name}スープの材料`, icon: s.icon, cat: 'base', unit: '回分', pack: 1, cost: 2600 + s.add * 8, lv: s.lv, soup: k })])),
+  torigara: I({ name: '鶏ガラ', icon: '🐔', cat: 'soup', unit: '羽分', pack: 2, cost: 1200, lv: 1, broth: 'tori' }),
+  tonkotsuB: I({ name: '豚骨（げんこつ）', icon: '🦴', cat: 'soup', unit: '本分', pack: 2, cost: 1600, lv: 10, broth: 'ton' }),
+  niboshiG: I({ name: '煮干し', icon: '🐟', cat: 'soup', unit: '袋', pack: 2, cost: 1500, lv: 30, broth: 'nibo' }),
+  yasai: I({ name: '香味野菜（ねぎ・しょうが・にんにく）', icon: '🧄', cat: 'soup', unit: 'セット', pack: 3, cost: 600, lv: 1 }),
+  kombu: I({ name: '昆布', icon: '🟫', cat: 'soup', unit: '枚', pack: 3, cost: 700, lv: 3 }),
+  t_shoyu: I({ name: '醤油（一升瓶）', icon: '🍶', cat: 'tare', unit: '本', pack: 1, cost: 900, lv: 1, tare: 'shoyu' }),
+  t_shio: I({ name: '天然塩', icon: '🧂', cat: 'tare', unit: '袋', pack: 1, cost: 600, lv: 3, tare: 'shio' }),
+  t_miso: I({ name: '合わせ味噌', icon: '🟠', cat: 'tare', unit: '樽', pack: 1, cost: 1200, lv: 6, tare: 'miso' }),
+  t_goma: I({ name: '練りごま・ラー油', icon: '🌶️', cat: 'tare', unit: 'セット', pack: 1, cost: 1800, lv: 22, tare: 'goma' }),
+  t_black: I({ name: 'たまり醤油', icon: '⚫', cat: 'tare', unit: '本', pack: 1, cost: 1500, lv: 40, tare: 'black' }),
   negi: I({ name: '長ねぎ', icon: '🌿', cat: 'top', unit: '束', pack: 3, cost: 600, lv: 1 }),
   chashu: I({ name: '豚バラ肉（煮豚用）', icon: '🥩', cat: 'top', unit: '本', pack: 2, cost: 2400, lv: 1 }),
   menma: I({ name: 'メンマ', icon: '🎋', cat: 'top', unit: '袋', pack: 2, cost: 900, lv: 1 }),
@@ -183,7 +221,7 @@ export const ingUnlocked = (id, lv) => !!INGREDIENTS[id] && (lv || 1) >= INGREDI
 // 1人前のだいたいの原価（メニューの原価表示用）
 export function unitCost(id) { const p = INGREDIENTS[id]; return p ? p.cost / p.pack : 0; }
 export function toppingCost(tid) { const t = TOPPINGS[tid]; return t ? unitCost(t.raw) / t.per : 0; }
-export function soupCost(k, sv = 20) { const s = SOUPS[k]; return s ? unitCost(s.set) / sv : 0; }
+export function soupCost(k) { const s = SOUPS[k]; if (!s) return 0; const B = BROTHS[s.broth], T = TARES[s.tare]; return unitCost(B.item) / POT_PER + unitCost('yasai') / POT_PER / 2 + unitCost(T.raw) / T.per; }
 export function menuCost(m) {
   if (m.kind === 'side') {
     const s = m.side;
@@ -213,16 +251,16 @@ const stools = (n, w) => Array.from({ length: n }, (_, i) => [-w / 2 + (i + 0.5)
 const tops = (n, w) => Array.from({ length: n }, (_, i) => [-w / 2 + (i + 0.5) * w / n, -0.36]);
 export const FIXTURES = {
   // ---- 厨房 ----
-  pot: F({ name: '寸胴鍋とコンロ', cat: 'kitchen', icon: '🍲', price: 12000, w: 0.9, d: 0.8, place: 'kitchen', lv: 1, pot: { sv: 20 }, fireRisk: 1, desc: 'スープを炊く。スープの材料を入れて火にかけると30秒で使えるようになり、長く炊くほどコクが出る（20杯分）' }),
-  pot2: F({ name: '大寸胴鍋', cat: 'kitchen', icon: '🍲', price: 32000, w: 1.1, d: 0.9, place: 'kitchen', lv: 15, pot: { sv: 35 }, fireRisk: 1, desc: '大きな寸胴鍋。1回で35杯分のスープが炊ける' }),
+  pot: F({ name: '寸胴鍋とコンロ', cat: 'kitchen', icon: '🍲', price: 12000, w: 0.9, d: 0.8, place: 'kitchen', lv: 1, pot: { sv: 20 }, fireRisk: 1, desc: 'だしを炊く。水を入れて、鶏ガラ・豚骨などと香味野菜を入れ、火にかける。出てきたアクを取るとすっきりする（20杯分）' }),
+  pot2: F({ name: '大寸胴鍋', cat: 'kitchen', icon: '🍲', price: 32000, w: 1.1, d: 0.9, place: 'kitchen', lv: 15, pot: { sv: 40 }, fireRisk: 1, desc: '大きな寸胴鍋。材料を多く入れると1回で40杯分のだしが炊ける' }),
   boiler: F({ name: '茹で麺機（4てぼ）', cat: 'kitchen', icon: '♨️', price: 15000, w: 1.0, d: 0.8, place: 'kitchen', lv: 1, baskets: 4, desc: '麺を茹でる。てぼを入れてからの秒数で、かため・ふつう・やわらかめが決まる' }),
   boiler6: F({ name: '茹で麺機（6てぼ）', cat: 'kitchen', icon: '♨️', price: 38000, w: 1.4, d: 0.8, place: 'kitchen', lv: 18, baskets: 6, desc: '6つのてぼを同時に茹でられる大型の茹で麺機' }),
-  topping: F({ name: 'トッピング台', cat: 'kitchen', icon: '🥢', price: 8000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, topping: true, desc: '仕込んだトッピングを丼にのせる台' }),
+  topping: F({ name: 'トッピング台', cat: 'kitchen', icon: '🥢', price: 8000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, topping: true, desc: 'タレ（かえし）を作って丼に入れる・仕込んだトッピングをのせる台' }),
   board: F({ name: 'まな板（仕込み台）', cat: 'kitchen', icon: '🔪', price: 5000, w: 1.2, d: 0.7, place: 'kitchen', lv: 1, board: true, desc: '冷蔵庫の食材を切って、トッピングを仕込む' }),
   fridge: F({ name: '業務用冷蔵庫', cat: 'kitchen', icon: '🧊', price: 15000, w: 1.2, d: 0.8, place: 'kitchen', lv: 1, cap: 40, desc: '届いた食材をしまっておく（40パック分）。ドローンで届いた食材は自動でここに入る' }),
   fridge2: F({ name: '大型冷蔵庫', cat: 'kitchen', icon: '🧊', price: 42000, w: 1.8, d: 0.8, place: 'kitchen', lv: 12, cap: 100, desc: '大きな冷蔵庫（100パック分）' }),
   dishrack: F({ name: '食器棚', cat: 'kitchen', icon: '🍽️', price: 6000, w: 1.2, d: 0.5, place: 'kitchen', lv: 1, rack: true, desc: 'きれいな丼・皿・ジョッキを取る' }),
-  sink: F({ name: '洗い場', cat: 'kitchen', icon: '🚰', price: 9000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, sink: true, desc: '下げた食器を置いて洗う（長押し）。洗った食器は食器棚へ' }),
+  sink: F({ name: '洗い場', cat: 'kitchen', icon: '🚰', price: 9000, w: 1.4, d: 0.7, place: 'kitchen', lv: 1, sink: true, desc: '下げた食器をシンクに入れて1つずつ洗う（長押し）→ 水切りかごに並ぶ → 食器棚にしまう' }),
   pass: F({ name: '受け渡し台', cat: 'kitchen', icon: '🛎️', price: 5000, w: 1.2, d: 0.6, place: 'any', lv: 1, pass: 4, desc: 'できた料理を置いておくと、接客のアルバイトがお客さんに運ぶ' }),
   // ---- サイドメニュー ----
   rice: F({ name: '炊飯器', cat: 'side', icon: '🍚', price: 6000, w: 0.6, d: 0.6, place: 'kitchen', lv: 2, rice: { sv: 20 }, desc: '米を入れて炊く（25秒で20杯分）。ライス・チャーシュー丼に使う' }),
@@ -233,7 +271,7 @@ export const FIXTURES = {
   table2: F({ name: 'テーブル席（2人）', cat: 'seat', icon: '🪑', price: 9000, w: 1.0, d: 1.7, place: 'dining', lv: 1, seats: [[0, 0.62], [0, -0.62]], spots: [[0, 0.18], [0, -0.18]], top: 0.74, desc: '向かい合わせの2人席' }),
   table4: F({ name: 'テーブル席（4人）', cat: 'seat', icon: '🪑', price: 20000, w: 1.6, d: 1.8, place: 'dining', lv: 7, seats: [[-0.4, 0.68], [0.4, 0.68], [-0.4, -0.68], [0.4, -0.68]], spots: [[-0.4, 0.2], [0.4, 0.2], [-0.4, -0.2], [0.4, -0.2]], top: 0.74, desc: '4人で座れるテーブル席' }),
   zashiki: F({ name: '小上がり（座敷・6人）', cat: 'seat', icon: '🎎', price: 48000, w: 2.6, d: 2.2, place: 'dining', lv: 24, seats: [[-0.8, 0.62], [0, 0.62], [0.8, 0.62], [-0.8, -0.62], [0, -0.62], [0.8, -0.62]], spots: [[-0.8, 0.2], [0, 0.2], [0.8, 0.2], [-0.8, -0.2], [0, -0.2], [0.8, -0.2]], top: 0.62, attract: 0.04, desc: '畳の小上がり。6人座れて、お店の雰囲気もアップ' }),
-  ticket: F({ name: '券売機', cat: 'service', icon: '🎫', price: 18000, w: 0.8, d: 0.6, place: 'dining', lv: 1, desc: 'お客さんはここで食券を買う。売上はいったん券売機（レジ）にたまる。泥棒に狙われるので、ときどき回収しよう' }),
+  ticket: F({ name: '券売機', cat: 'service', icon: '🎫', price: 18000, w: 0.8, d: 0.6, place: 'dining', lv: 1, desc: 'お客さんはここで食券を買う。代金はレジに入る' }),
   bench: F({ name: '待合ベンチ', cat: 'service', icon: '🪑', price: 4000, w: 1.5, d: 0.5, place: 'dining', lv: 3, wait: 3, desc: '席が空くのを待つお客さんが座る（待つのが少し長くなっても怒りにくい）' }),
   water: F({ name: 'ウォーターサーバー', cat: 'service', icon: '💧', price: 8000, w: 0.5, d: 0.5, place: 'dining', lv: 5, attract: 0.03, desc: 'セルフのお水。待っているお客さんがイライラしにくくなる' }),
   trash: F({ name: '生ゴミ箱', cat: 'service', icon: '🗑️', price: 1500, w: 0.5, d: 0.5, place: 'any', lv: 1, desc: '失敗した料理を捨てる（器は洗い物になる）' }),
@@ -258,6 +296,7 @@ export const FIXTURES = {
   counter: F({ name: 'カウンター席', cat: 'fixed', icon: '🍥', price: 0, w: 4, d: 1.4, fixed: true, seats: stools(4, 4), spots: tops(4, 4), top: 0.95, desc: '厨房と客席の間のカウンター' }),
   counter2: F({ name: 'カウンター席', cat: 'fixed', icon: '🍥', price: 0, w: 2.4, d: 1.4, fixed: true, seats: stools(2, 2.4), spots: tops(2, 2.4), top: 0.95, desc: '厨房と客席の間のカウンター' }),
   pc: F({ name: 'パソコン', cat: 'fixed', icon: '💻', price: 0, w: 1.6, d: 0.8, fixed: true, desc: '仕入れ・メニュー・アルバイト・お店の設定' }),
+  register: F({ name: 'レジ', cat: 'fixed', icon: '💴', price: 0, w: 0.9, d: 0.6, fixed: true, place: 'dining', desc: '売上金が入っている。泥棒に注意。賭場に行くときは、ここを開けてお金をつかんでいく' }),
   opensign: F({ name: 'のれん掛けの札', cat: 'fixed', icon: '🪧', price: 0, w: 0.6, d: 0.5, fixed: true, desc: '「営業中」にするとお客さんが来る' }),
   chohan: F({ name: '丁半の盆', cat: 'fixed', icon: '🎲', price: 0, w: 3.0, d: 1.8, fixed: true, gamble: 'chohan', desc: '壺振りがサイコロ2つを振る。合計が偶数なら丁、奇数なら半' }),
   chinchiro: F({ name: 'チンチロの卓', cat: 'fixed', icon: '🥣', price: 0, w: 1.6, d: 1.6, fixed: true, gamble: 'chinchiro', desc: 'どんぶりにサイコロ3つ。親（胴元）と役の強さで勝負' }),

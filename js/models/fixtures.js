@@ -46,7 +46,7 @@ export const ANCHOR = {
   boilerY: 0.9,
   panY: 0.93, pans: (w) => { const out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; },
   rack: { ys: [0.12, 0.6, 1.08], xs: [-0.42, -0.14, 0.14, 0.42] },
-  sink: [0.25, 0.72, 0], passY: 1.06, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
+  sink: [0.25, 0.72, 0], dryRack: [-0.38, 0.895, -0.04], tareMix: [0.5, 0.9, 0.26], tarePots: [-0.3, 0.9, 0.28], passY: 1.06, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
 };
 const BUILD = {
   // ---------- 厨房 ----------
@@ -88,8 +88,32 @@ const BUILD = {
     for (const z of [-d.d / 2 + 0.04, d.d / 2 - 0.04]) add(g, T(box(0.74, 0.18, 0.02), 0.25, 0.7, z), STEEL());
     add(g, T(box(0.04, 0.4, 0.04), 0.25, 0.88, -d.d / 2 + 0.06), CHROME());
     add(g, T(cyl(0.015, 0.015, 0.25, 8), 0.25, 1.26, -d.d / 2 + 0.06 + 0.12, Math.PI / 2), CHROME());
-    add(g, T(box(0.5, 0.06, 0.4), -0.4, 0.86), C(0x9fb5c4, { r: 0.5 }));
-    add(g, T(cyl(0.04, 0.04, 0.12, 10), -0.55, 0.86, -0.2), C(0x2e8bff, { r: 0.4 }));
+    // 水切りかご（ステンレスの網かご）
+    add(g, T(box(0.56, 0.015, 0.44), -0.38, 0.86), C(0xb7bec4, { r: 0.25, m: 0.8 }));
+    const wire = CHROME();
+    for (const x of [-0.65, -0.11]) for (const z of [-0.21, 0.21]) add(g, T(cyl(0.006, 0.006, 0.2, 6), -0.38 + (x + 0.38), 0.875, z), wire);
+    for (const y of [0.97, 1.07]) { add(g, T(box(0.56, 0.008, 0.008), -0.38, y, -0.21), wire); add(g, T(box(0.56, 0.008, 0.008), -0.38, y, 0.21), wire); add(g, T(box(0.008, 0.008, 0.44), -0.66, y, 0), wire); add(g, T(box(0.008, 0.008, 0.44), -0.1, y, 0), wire); }
+    for (let i = 0; i < 7; i++) add(g, T(box(0.006, 0.06, 0.4), -0.62 + i * 0.08, 0.875, 0), wire);
+    // 洗剤とスポンジ
+    add(g, T(cyl(0.028, 0.032, 0.16, 10), 0.6, 0.86, -0.22), C(0x2e8bff, { r: 0.35 }));
+    add(g, T(rbox(0.08, 0.03, 0.05, 0.008), 0.55, 0.86, 0.2), C(0xf4d03f, { r: 0.8 }));
+    return g;
+  },
+  register(f) {
+    // 小さなカウンターの上のレジ
+    const g = new THREE.Group(), d = FIXTURES.register;
+    add(g, box(d.w, 0.95, d.d), C(0x6b4a30, { r: 0.6 }));
+    add(g, T(rbox(d.w + 0.04, 0.04, d.d + 0.04, 0.01), 0, 0.95), C(0x3a2a1e, { r: 0.4 }));
+    const body = new THREE.Group(); body.position.set(0, 0.99, -0.02);
+    add(body, rbox(0.42, 0.1, 0.36, 0.02), C(0xe9e4d8, { r: 0.4 }));
+    add(body, T(box(0.4, 0.07, 0.02), 0, 0.012, 0.18), C(0xd8d2c4, { r: 0.4 }));
+    add(body, T(box(0.04, 0.02, 0.01), 0, 0.045, 0.19), C(0x9aa0a6, { r: 0.3, m: 0.7 }));
+    add(body, T(rbox(0.36, 0.06, 0.2, 0.015), 0, 0.1, -0.02, -0.35), C(0xcfc8b8, { r: 0.4 }));
+    for (let i = 0; i < 12; i++) add(body, T(box(0.04, 0.012, 0.03), -0.09 + (i % 4) * 0.06, 0.13 + Math.floor(i / 4) * 0.012, 0.03 - Math.floor(i / 4) * 0.04, -0.35), C(i === 11 ? 0xd62828 : 0x4a4a4a, { r: 0.5 }));
+    add(body, T(box(0.2, 0.09, 0.03), 0, 0.2, -0.13, -0.2), C(0x2b2d42, { r: 0.4 }));
+    const scr = M(T(plane(0.18, 0.07), 0, 0), basic(signTexture('¥ 0', { w: 256, h: 96, bg: '#163a2a', fg: '#5dff9f', radius: 6 }))); scr.position.set(0, 0.205, -0.114); scr.rotation.x = -0.2; body.add(scr);
+    g.add(body);
+    const tag = M(T(plane(0.5, 0.14), 0, 0), basic(signTexture('お会計', { w: 384, h: 110, bg: '#b3201b', fg: '#fff5e6', radius: 10 }))); tag.position.set(0, 0.7, d.d / 2 + 0.003); g.add(tag);
     return g;
   },
   pass(f) {

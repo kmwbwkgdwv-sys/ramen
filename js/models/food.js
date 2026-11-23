@@ -1,7 +1,7 @@
 // ===== 料理と器の3Dモデル（丼・ラーメン・トッピング・ライス・餃子・唐揚げ・ビール・道具） =====
 // パソコンの画面の絵も、ここのモデルをそのまま撮影して使う（見た目をそろえるため）
 import * as THREE from 'three';
-import { SOUPS, TOPPINGS, HARD } from '../data.js';
+import { SOUPS, TOPPINGS, HARD, BROTHS, TARES } from '../data.js';
 import { canvasTex, shade } from '../textures.js';
 import { mulberry32 } from '../util.js';
 import { mat, T, box, rbox, cyl, sph, torus, lathe, bakeGroup, merge, vcolor } from './geo.js';
@@ -26,7 +26,7 @@ const TEX = new Map();
 const ctex = (k, w, h, draw, o) => { let t = TEX.get(k); if (!t) { t = canvasTex(w, h, draw, o); TEX.set(k, t); } return t; };
 
 // ---------- 器 ----------
-export const BOWL_R = 0.106, BOWL_H = 0.085;
+export const BOWL_R = 0.106, BOWL_H = 0.085, BOWL_SCALE = 1.32; // ラーメン丼は大きめ（直径28cmくらい）
 const OUT = [[0, 0.004], [0.034, 0.004], [0.036, 0], [0.046, 0], [0.048, 0.007], [0.062, 0.018], [0.08, 0.035], [0.094, 0.055], [0.102, 0.072], [0.106, 0.085]];
 const INN = [[0, 0.013], [0.038, 0.014], [0.064, 0.026], [0.083, 0.045], [0.095, 0.065], [0.1005, 0.085]];
 const S_H = 0.062;
@@ -277,20 +277,31 @@ function karaageGeo(seed, colHex) {
 }
 const beerTex = () => ctex('beer', 64, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#f7b52c'); g.addColorStop(1, '#d9800c'); c.fillStyle = g; c.fillRect(0, 0, w, h); speckle(c, w, h, 160, 41, 'rgba(255,250,220,0.65)', 1); });
 
+// ---------- ラーメン丼（タレ → だし → 麺 → トッピング） ----------
+function buildBowl(outer, g, d, frac) {
+  bowlBase(g, 'bowl');
+  const tex = d.soup || (d.broth ? BROTHS[d.broth]?.tex : null);
+  if (tex) {
+    const lv = frac > 0.92 ? 0.22 : 1 - frac * 0.55, y = 0.02 + (BOWL_H - 0.033) * lv, R = innerR(INN, y) - 0.0015;
+    soupDisc(g, tex, y, R);
+    if (!d.tare && d.broth) g.add(new THREE.Mesh(T(disc(R * 0.98, 28), 0, y + 0.0004, 0), mat('#ffffff', { r: 0.1, t: true, op: 0.25 })));
+    if (d.men != null && frac < 0.85) { const n = Math.max(3, Math.round(20 * (1 - frac * 1.05))), ng = neatNoodles(R, n, noodleState(d.men), 5); if (ng) g.add(new THREE.Mesh(T(ng, 0, y, 0), VC({ r: 0.42 }))); }
+    const tp = (d.tp || []).filter((t, i) => frac < 0.25 + 0.5 * ((i + 1) / ((d.tp || []).length + 1)));
+    toppings(g, tp, y + (d.men != null ? 0.004 : 0), R, 7);
+  } else if (d.tare) {
+    // タレだけ：底に少したまっている
+    g.add(new THREE.Mesh(T(disc(0.05, 24), 0, 0.0155, 0), mat(TARES[d.tare]?.color || '#3a1c0b', { r: 0.08 })));
+  } else if (d.men != null) {
+    const ng = tangledNoodles(0.05, 0.02, 12, noodleState(d.men), 9); g.add(new THREE.Mesh(T(ng, 0, 0.012, 0), VC({ r: 0.42 })));
+  }
+  return bakeGroup(outer);
+}
 // ---------- 料理1つぶん ----------
 function build(d, frac) {
   const g = new THREE.Group();
   if (d.k === 'bowl') {
-    bowlBase(g, 'bowl');
-    if (d.soup) {
-      const lv = frac > 0.92 ? 0.22 : 1 - frac * 0.55, y = 0.02 + (BOWL_H - 0.033) * lv, R = innerR(INN, y) - 0.0015;
-      soupDisc(g, d.soup, y, R);
-      if (d.men != null && frac < 0.85) { const n = Math.max(3, Math.round(20 * (1 - frac * 1.05))), ng = neatNoodles(R, n, noodleState(d.men), 5); if (ng) g.add(new THREE.Mesh(T(ng, 0, y, 0), VC({ r: 0.42 }))); }
-      const tp = (d.tp || []).filter((t, i) => frac < 0.25 + 0.5 * ((i + 1) / ((d.tp || []).length + 1)));
-      toppings(g, tp, y + (d.men != null ? 0.004 : 0), R, 7);
-    } else if (d.men != null) {
-      const ng = tangledNoodles(0.05, 0.02, 12, noodleState(d.men), 9); g.add(new THREE.Mesh(T(ng, 0, 0.012, 0), VC({ r: 0.42 })));
-    }
+    const outer = g, gb = new THREE.Group(); gb.scale.setScalar(BOWL_SCALE); outer.add(gb);
+    return buildBowl(outer, gb, d, frac);
   } else if (d.k === 'bowlS') {
     bowlBase(g, 'bowlS');
     if (d.side === 'rice' && frac < 0.9) {
@@ -330,22 +341,23 @@ function build(d, frac) {
 }
 export function dishKey(d, frac = 0) {
   const fb = Math.round(frac * 10);
-  return [d.k, d.soup || '', d.side || '', noodleState(d.men), (d.tp || []).join('.'), d.k === 'mug' ? Math.round((d.fill || 0) * 20) : 0, d.burnt ? 1 : 0, d.k === 'plate' && (d.q ?? 80) >= 70 ? 1 : 0, fb].join('|');
+  return [d.k, d.soup || '', d.broth || '', d.tare || '', d.side || '', noodleState(d.men), (d.tp || []).join('.'), d.k === 'mug' ? Math.round((d.fill || 0) * 20) : 0, d.burnt ? 1 : 0, d.k === 'plate' && (d.q ?? 80) >= 70 ? 1 : 0, fb].join('|');
 }
 const cache = new Map();
 const cached = (k, make) => { let g = cache.get(k); if (!g) { g = make(); cache.set(k, g); if (cache.size > 400) cache.delete(cache.keys().next().value); } return g.clone(); };
 export function dishMesh(d, frac = 0) { const k = dishKey(d, frac), o = cached(k, () => build(d, frac)); o.userData.key = k; return o; }
 // 下げた食器（重ねた丼・皿）
-export function dirtyMesh(list) {
-  return cached('dirty|' + list.join(','), () => {
+export function cleanMesh(list) { return dirtyMesh(list, true); }
+export function dirtyMesh(list, clean = false) {
+  return cached((clean ? 'clean|' : 'dirty|') + list.join(','), () => {
     const grp = new THREE.Group(); let y = 0;
     list.forEach((kind, i) => {
       const s = new THREE.Group();
-      if (kind === 'plate') { plateBase(s); s.add(new THREE.Mesh(T(disc(0.05, 16), 0.01, 0.0105, 0), mat('#c89a5a', { r: 0.2, t: true, op: 0.35 }))); }
-      else if (kind === 'mug') { s.add(new THREE.Mesh(lathe([[0.034, 0], [0.041, 0.002], [0.043, 0.012], [0.043, 0.15], [0.0405, 0.15], [0.0395, 0.018], [0, 0.018]], 16), mat('#eef7ff', { r: 0.05, t: true, op: 0.3, side: THREE.DoubleSide }))); s.add(new THREE.Mesh(T(cyl(0.039, 0.039, 0.012, 14), 0, 0.018), C('#fff6dc', { r: 0.9 }))); }
-      else { bowlBase(s, kind); s.add(new THREE.Mesh(T(disc(kind === 'bowlS' ? 0.03 : 0.045, 20), 0, kind === 'bowlS' ? 0.0125 : 0.0155, 0), mat('#8a5a30', { r: 0.15, t: true, op: 0.6 }))); }
+      if (kind === 'plate') { plateBase(s); if (!clean) s.add(new THREE.Mesh(T(disc(0.05, 16), 0.01, 0.0105, 0), mat('#c89a5a', { r: 0.2, t: true, op: 0.35 }))); }
+      else if (kind === 'mug') { s.add(new THREE.Mesh(lathe([[0.034, 0], [0.041, 0.002], [0.043, 0.012], [0.043, 0.15], [0.0405, 0.15], [0.0395, 0.018], [0, 0.018]], 16), mat('#eef7ff', { r: 0.05, t: true, op: 0.3, side: THREE.DoubleSide }))); if (!clean) s.add(new THREE.Mesh(T(cyl(0.039, 0.039, 0.012, 14), 0, 0.018), C('#fff6dc', { r: 0.9 }))); }
+      else { bowlBase(s, kind); if (!clean) s.add(new THREE.Mesh(T(disc(kind === 'bowlS' ? 0.03 : 0.045, 20), 0, kind === 'bowlS' ? 0.0125 : 0.0155, 0), mat('#8a5a30', { r: 0.15, t: true, op: 0.6 }))); if (kind === 'bowl') s.scale.setScalar(BOWL_SCALE); }
       s.position.set((i % 2) * 0.008, y, 0); s.rotation.y = i * 0.7;
-      y += kind === 'plate' ? 0.014 : kind === 'mug' ? 0.155 : kind === 'bowlS' ? 0.03 : 0.04;
+      y += kind === 'plate' ? 0.014 : kind === 'mug' ? 0.155 : kind === 'bowlS' ? 0.03 : 0.04 * BOWL_SCALE;
       grp.add(s);
     });
     return bakeGroup(grp);
@@ -353,6 +365,7 @@ export function dirtyMesh(list) {
 }
 // 手に持つ道具
 export function toolMesh(kind) {
+  if (kind === 'cash') return cashMesh(30000);
   return cached('tool|' + kind, () => {
     const grp = new THREE.Group();
     if (kind === 'ext') {
@@ -429,6 +442,95 @@ export function toppingDish(tid) {
 }
 // 茹でる前の麺（1玉）
 export function noodleBall() { return cached('men1', () => { const g = new THREE.Group(); g.add(new THREE.Mesh(tangledNoodles(0.04, 0.03, 12, 'raw', 6), VC({ r: 0.5 }))); return bakeGroup(g); }); }
+// ---------- 水切りかご（洗った食器を立てて並べる） ----------
+export function dryRackMesh(list) {
+  return cached('dryr|' + list.join(','), () => {
+    const g = new THREE.Group();
+    list.slice(0, 12).forEach((k, i) => {
+      const s = new THREE.Group(), row = Math.floor(i / 6), col = i % 6;
+      if (k === 'plate') plateBase(s); else if (k === 'mug') { s.add(new THREE.Mesh(lathe([[0.034, 0], [0.041, 0.002], [0.043, 0.012], [0.043, 0.15], [0.0405, 0.15], [0.0395, 0.018], [0, 0.018]], 14), mat('#eef7ff', { r: 0.05, t: true, op: 0.35, side: THREE.DoubleSide }))); }
+      else { bowlBase(s, k); if (k === 'bowl') s.scale.setScalar(BOWL_SCALE * 0.82); }
+      const big = k === 'bowl' ? 0.112 : k === 'bowlS' ? 0.066 : k === 'plate' ? 0.12 : 0;
+      s.rotation.set(k === 'mug' ? Math.PI : 1.42, 0, 0);
+      s.position.set(-0.22 + col * 0.088, k === 'mug' ? 0.15 : big * 0.92, -0.1 + row * 0.2);
+      g.add(s);
+    });
+    return bakeGroup(g);
+  });
+}
+// 洗っている食器（泡だらけ）
+export function washingMesh(k, p) {
+  return cached('wash|' + k + '|' + Math.floor(p * 3), () => {
+    const g = new THREE.Group(), s = new THREE.Group();
+    if (k === 'plate') plateBase(s); else bowlBase(s, k === 'bowl' ? 'bowl' : 'bowlS');
+    if (k === 'bowl') s.scale.setScalar(BOWL_SCALE * 0.9);
+    s.rotation.set(0.9, 0, 0); g.add(s);
+    const r = mulberry32(5), ps = [];
+    for (let i = 0; i < 18 - Math.floor(p * 3) * 5; i++) ps.push(T(sph(0.012 + r() * 0.012, 6, 4), (r() - 0.5) * 0.16, 0.02 + r() * 0.08, (r() - 0.5) * 0.12));
+    if (ps.length) g.add(new THREE.Mesh(merge(ps), mat('#ffffff', { r: 0.6, t: true, op: 0.85 })));
+    g.add(new THREE.Mesh(T(rbox(0.07, 0.03, 0.045, 0.008), 0.09, 0.09, 0.02, 0.3, 0.5, 0), C('#f4d03f', { r: 0.8 })));
+    g.add(new THREE.Mesh(T(rbox(0.07, 0.012, 0.045, 0.004), 0.09, 0.07, 0.02, 0.3, 0.5, 0), C('#2e8b57', { r: 0.9 })));
+    return bakeGroup(g);
+  });
+}
+// ---------- 寸胴鍋の中身（水・骨・香味野菜・アク） ----------
+const potPiece = {
+  torigara: (r) => { const g = new THREE.Group(); for (let i = 0; i < 3; i++) g.add(new THREE.Mesh(T(new THREE.IcosahedronGeometry(0.045, 1), (r() - 0.5) * 0.08, 0, (r() - 0.5) * 0.08, r(), r(), r(), 1.3, 0.7, 1), C(i % 2 ? '#efd9b4' : '#e6c99c', { r: 0.55, flat: true }))); return g; },
+  tonkotsuB: (r) => { const g = new THREE.Group(), m = C('#efe4cf', { r: 0.5 }); for (let i = 0; i < 2; i++) { const b = new THREE.Group(); b.add(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.14, 10).rotateZ(Math.PI / 2), m)); for (const x of [-0.075, 0.075]) b.add(new THREE.Mesh(T(sph(0.03, 10, 7), x, 0, 0, 0, 0, 0, 1, 0.85, 1.2), m)); b.position.set((r() - 0.5) * 0.08, 0, (r() - 0.5) * 0.1); b.rotation.y = r() * 3; g.add(b); } return g; },
+  niboshiG: (r) => { const g = new THREE.Group(), ps = []; for (let i = 0; i < 10; i++) ps.push(T(sph(1, 8, 5), (r() - 0.5) * 0.3, 0, (r() - 0.5) * 0.3, 0, r() * 6, 0, 0.035, 0.007, 0.009)); g.add(new THREE.Mesh(merge(ps), C('#a9adb3', { r: 0.35, m: 0.4 }))); return g; },
+  yasai: (r) => { const g = new THREE.Group(); for (let i = 0; i < 3; i++) g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.07, 10).rotateZ(Math.PI / 2).translate((r() - 0.5) * 0.2, 0, (r() - 0.5) * 0.2), C(i ? '#cfe3a2' : '#f1f1e4', { r: 0.5 }))); g.add(new THREE.Mesh(T(new THREE.CylinderGeometry(0.025, 0.025, 0.006, 12), 0.05, 0.004, -0.06), C('#e8d39a', { r: 0.5 }))); g.add(new THREE.Mesh(T(sph(0.017, 8, 6), -0.06, 0.004, 0.06), C('#f7f3ea', { r: 0.5 }))); return g; },
+  kombu: (r) => { const g = new THREE.Group(); for (let i = 0; i < 2; i++) g.add(new THREE.Mesh(T(box(0.16, 0.003, 0.05), (r() - 0.5) * 0.1, 0, (r() - 0.5) * 0.14, 0, r() * 3, 0), C('#24301e', { r: 0.6 }))); return g; },
+};
+export function potContents(P, r, heat, aku) {
+  if (!P || !(P.w > 0)) return null;
+  const B = P.b && BROTHS[P.b], k = B ? Math.min(1, heat / B.ready) : 0, hb = Math.min(4, Math.floor(k * 4)), ab = Math.min(5, Math.round(aku * 5));
+  const key = ['pot', r, P.b || '-', Object.entries(P.n || {}).map(([a, b]) => a + b).join('.'), hb, ab].join('|');
+  return cached(key, () => {
+    const g = new THREE.Group();
+    if (B) { g.add(new THREE.Mesh(disc(r, 32), mat('#ffffff', { map: soupTex(B.tex), r: 0.1, t: true, op: 0.45 + 0.55 * (hb / 4) }))); }
+    else g.add(new THREE.Mesh(disc(r, 32), mat('#cfe6ee', { r: 0.05, t: true, op: 0.5 })));
+    const rnd = mulberry32(7);
+    for (const [id, n] of Object.entries(P.n || {})) for (let i = 0; i < Math.min(2, n); i++) { const mk = potPiece[id]; if (!mk) continue; const o = mk(rnd); o.position.set((rnd() - 0.5) * r * 0.9, -0.012, (rnd() - 0.5) * r * 0.9); g.add(o); }
+    if (ab) { const ps = []; for (let i = 0; i < ab * 4; i++) { const a = rnd() * 7, d = Math.sqrt(rnd()) * r * 0.85; ps.push(T(sph(0.018 + rnd() * 0.016, 12, 6), Math.cos(a) * d, 0.002, Math.sin(a) * d, 0, rnd() * 3, 0, 1.4, 0.3, 1.1)); } g.add(new THREE.Mesh(merge(ps), C('#9b8a74', { r: 0.8 }))); }
+    return bakeGroup(g);
+  });
+}
+// ---------- お金（手に持つ札束・台に置いたお金） ----------
+const billTex = () => ctex('bill', 256, 128, (c, w, h) => {
+  c.fillStyle = '#d9cfa8'; c.fillRect(0, 0, w, h); c.strokeStyle = '#8a7a4a'; c.lineWidth = 6; c.strokeRect(6, 6, w - 12, h - 12);
+  c.fillStyle = '#b9a874'; c.beginPath(); c.arc(w * 0.75, h / 2, 34, 0, 7); c.fill();
+  c.fillStyle = '#5a4a24'; c.font = '900 40px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('壱万', w * 0.33, h / 2 - 4); c.font = '800 18px sans-serif'; c.fillText('らーめん銀行', w * 0.33, h - 22); c.fillText('円', w * 0.75, h / 2);
+});
+export function cashMesh(v = 10000) {
+  const n = Math.max(1, Math.min(14, Math.round(Math.log2(Math.max(1000, v) / 1000) * 2 + 1)));
+  return cached('cash|' + n, () => {
+    const g = new THREE.Group(), m = mat('#ffffff', { map: billTex(), r: 0.7 });
+    for (let i = 0; i < n; i++) g.add(new THREE.Mesh(T(box(0.16, 0.002, 0.075), (i % 3 - 1) * 0.003, 0.001 + i * 0.0022, 0, 0, (i % 2 ? 0.04 : -0.03)), m));
+    g.add(new THREE.Mesh(T(box(0.03, n * 0.0022 + 0.003, 0.077), 0, 0.0005, 0), C('#e8e2d0', { r: 0.8 })));
+    return bakeGroup(g);
+  });
+}
+// ---------- タレ（かえし） ----------
+export function tarePot(k, f) {
+  return cached('tpot|' + k + '|' + Math.ceil(f * 3), () => {
+    const g = new THREE.Group(), T = TARES[k];
+    g.add(new THREE.Mesh(lathe([[0.04, 0], [0.046, 0.004], [0.046, 0.075], [0.042, 0.075], [0.04, 0.008], [0, 0.008]], 20), C('#f4f1ea', { r: 0.25 })));
+    g.add(new THREE.Mesh(T2(disc(0.041, 20), 0, 0.012 + 0.058 * Math.max(0.15, f), 0), mat(T.color, { r: 0.08 })));
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.13, 6).rotateX(0.35).translate(0.018, 0.08, -0.01), C('#c9cfd4', { r: 0.25, m: 0.8 })));
+    return bakeGroup(g);
+  });
+}
+const T2 = (g, x, y, z) => g.translate(x, y, z);
+export function tareBowl(k, p) {
+  return cached('tbowl|' + k + '|' + Math.floor(p * 3), () => {
+    const g = new THREE.Group(), T = TARES[k], c = new THREE.Color(T.color).lerp(new THREE.Color('#ffffff'), 0.25 * (1 - p));
+    g.add(new THREE.Mesh(lathe([[0, 0.002], [0.04, 0.002], [0.075, 0.03], [0.09, 0.06], [0.088, 0.062], [0.072, 0.033], [0.039, 0.006], [0, 0.006]], 24), C('#d3d8dc', { r: 0.2, m: 0.85, side: THREE.DoubleSide })));
+    g.add(new THREE.Mesh(T2(disc(0.07, 24), 0, 0.03, 0), mat('#' + c.getHexString(), { r: 0.1 })));
+    g.add(new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.002, 4, 16).rotateX(Math.PI / 2).translate(0, 0.031, 0), mat('#ffffff', { r: 0.2, t: true, op: 0.35 })));
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.2, 6).rotateZ(0.7).translate(0.04, 0.09, 0), C('#8a5a30', { r: 0.6 })));
+    return bakeGroup(g);
+  });
+}
 export function soupSurface(k, r) { return new THREE.Mesh(disc(r, 32), mat('#ffffff', { map: soupTex(k), r: 0.1 })); }
 export function riceSurface(r) { return new THREE.Mesh(disc(r, 28), mat('#ffffff', { map: riceTex(), r: 0.65 })); }
 export { PIECE, pile, tangledNoodles };

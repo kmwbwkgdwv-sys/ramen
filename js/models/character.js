@@ -384,6 +384,7 @@ export class Character {
     if (this.carry) { sl = sr = -1.05; el = er = -0.75; zl = 0.18; zr = -0.18; }
     else if (a === 'reach') { sr = -1.4 + Math.sin(this.t * 6) * 0.2; er = -0.25; sl = -0.15; }
     else if (a === 'eat') { sr = -0.9 + Math.max(0, Math.sin(this.t * 3.2)) * -0.6; er = -1.5; sl = -0.7; el = -1.2; zl = 0.1; }
+    else if (a === 'yugiri') { const k = Math.sin(this.t * 22); sr = -1.5 - k * 0.35; er = -0.4; sl = -1.5 - k * 0.35; el = -0.4; }
     else if (a === 'stir' || a === 'wash') { sr = -0.9; er = -0.6 + Math.sin(this.t * 8) * 0.3; sl = -0.8; el = -0.6 + Math.cos(this.t * 8) * 0.3; }
     else if (a === 'chop') { sr = -0.75; er = -0.9 + Math.abs(Math.sin(this.t * 11)) * 0.6; sl = -0.7; el = -0.9; }
     else if (a === 'throw') { sr = -2.4 + Math.sin(this.t * 9) * 0.6; er = -0.3; sl = -0.3; }

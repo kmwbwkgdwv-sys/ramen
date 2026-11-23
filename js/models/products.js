@@ -43,6 +43,12 @@ function pouch(g, w, h, d, lbl, back = '#ffffff') {
   add(g, new THREE.PlaneGeometry(w * 0.9, h * 0.88), mat('#ffffff', { map: lbl, r: 0.4 }), 0, h * 0.5, d / 2 + 0.0015);
   add(g, T(box(w * 1.0, 0.014, d * 0.35), 0, h - 0.01, 0), C(shade(back, -0.08), { r: 0.4 }));
 }
+// 一升瓶
+function bottle(g, glass, lbl) {
+  add(g, lathe([[0, 0], [0.05, 0], [0.052, 0.006], [0.052, 0.2], [0.046, 0.23], [0.02, 0.27], [0.016, 0.3], [0.016, 0.33], [0, 0.33]], 24), mat(glass, { r: 0.08, t: true, op: 0.92 }));
+  add(g, cyl(0.0525, 0.0525, 0.12, 24, true), mat('#ffffff', { map: lbl, r: 0.5 }), 0, 0.05, 0);
+  add(g, T(cyl(0.018, 0.018, 0.03, 12), 0, 0.325), C('#d4af37', { r: 0.3, m: 0.7 }));
+}
 function can(g, r, h, lbl) {
   const steel = C('#c9cdd1', { r: 0.25, m: 0.85 });
   add(g, cyl(r, r, h, 24, true), mat('#ffffff', { map: lbl, r: 0.35 }));
@@ -120,6 +126,33 @@ const MAKE = {
     add(g, T(new THREE.PlaneGeometry(0.12, 0.12), 0, 0.2, 0.1215), mat('#ffffff', { map: label('beerkeg', { w: 256, h: 256, bg: '#f7b52c', fg: '#7a1410', title: '生ビール', sub: '業務用 20杯分', round: 30 }), r: 0.4 }));
   },
   chicken(g) { tray(g, 0.24, 0.15); const r = mulberry32(4); for (let i = 0; i < 4; i++) add(g, T(sph(1, 12, 8), 0, 0, 0, 0, r() * 3, 0, 0.05, 0.016, 0.034), C('#f0b6a8', { r: 0.45 }), -0.06 + (i % 2) * 0.11, 0.028, -0.032 + Math.floor(i / 2) * 0.064); add(g, T(rbox(0.24, 0.05, 0.15, 0.02), 0, 0.012), film()); add(g, T(new THREE.PlaneGeometry(0.08, 0.05), 0, 0, 0, -Math.PI / 2), mat('#ffffff', { map: label('chicken', { w: 256, h: 160, bg: '#ffffff', fg: '#c0392b', title: '鶏もも', sub: '国産　唐揚げ用', border: '#c0392b' }), r: 0.5 }), 0.05, 0.064, 0.03); },
+  torigara(g) { // 鶏ガラ（トレーにラップ）
+    tray(g, 0.26, 0.17); const r = mulberry32(3);
+    for (let i = 0; i < 2; i++) { const o = new THREE.Group(); add(o, new THREE.IcosahedronGeometry(0.05, 1).scale(1.4, 0.55, 0.9), C('#efd6b0', { r: 0.6, flat: true })); for (let k = 0; k < 4; k++) add(o, new THREE.CylinderGeometry(0.008, 0.01, 0.07, 6).rotateZ(Math.PI / 2 + (r() - 0.5)).translate((r() - 0.5) * 0.08, 0.02, (r() - 0.5) * 0.06), C('#f3e6cc', { r: 0.5 })); o.position.set(-0.055 + i * 0.11, 0.035, 0); o.rotation.y = i * 1.3; g.add(o); }
+    add(g, T(rbox(0.26, 0.07, 0.17, 0.02), 0, 0.012), film());
+    add(g, T(new THREE.PlaneGeometry(0.09, 0.05), 0, 0, 0, -Math.PI / 2), mat('#ffffff', { map: label('torigara', { w: 256, h: 140, bg: '#fffaf0', fg: '#b3201b', title: '鶏ガラ', sub: '国産　だし用', border: '#b3201b' }), r: 0.5 }), 0.06, 0.084, 0.04);
+  },
+  tonkotsuB(g) { // 豚骨（げんこつ）
+    tray(g, 0.28, 0.17);
+    const m = C('#f1e6d2', { r: 0.5 });
+    for (let i = 0; i < 3; i++) { const b = new THREE.Group(); add(b, new THREE.CylinderGeometry(0.016, 0.016, 0.17, 10).rotateZ(Math.PI / 2), m); for (const x of [-0.09, 0.09]) add(b, new THREE.SphereGeometry(0.03, 10, 8).scale(1, 0.85, 1.25), m, x, 0, 0); b.position.set(0, 0.035 + (i === 1 ? 0.02 : 0), -0.045 + i * 0.045); b.rotation.y = (i - 1) * 0.15; g.add(b); }
+    add(g, T(rbox(0.28, 0.08, 0.17, 0.02), 0, 0.012), film());
+    add(g, T(new THREE.PlaneGeometry(0.1, 0.05), 0, 0, 0, -Math.PI / 2), mat('#ffffff', { map: label('tonkotsuB', { w: 256, h: 130, bg: '#fffaf0', fg: '#7a4b12', title: '豚骨', sub: 'げんこつ　だし用', border: '#7a4b12' }), r: 0.5 }), 0.07, 0.094, 0.045);
+  },
+  niboshiG(g) { const f = new THREE.Group(), ps = [], r = mulberry32(6); for (let i = 0; i < 26; i++) ps.push(T(new THREE.SphereGeometry(1, 8, 5), (r() - 0.5) * 0.15, 0.01 + r() * 0.025, (r() - 0.5) * 0.09, 0, r() * 6, 0, 0.03, 0.006, 0.008)); f.add(new THREE.Mesh(merge(ps), C('#a9adb3', { r: 0.35, m: 0.5 }))); bag(g, 0.19, 0.055, 0.12, f, label('niboshiG', { bg: '#1d4f91', fg: '#ffffff', title: '煮干し', border: '#ffffff' })); },
+  yasai(g) { // 香味野菜：ねぎ・しょうが・にんにく
+    tray(g, 0.26, 0.16, '#e8f0e0');
+    add(g, new THREE.CylinderGeometry(0.016, 0.017, 0.2, 12).rotateZ(Math.PI / 2), C('#f4f3e8', { r: 0.45 }), -0.02, 0.03, -0.04);
+    add(g, new THREE.CylinderGeometry(0.008, 0.016, 0.08, 10).rotateZ(-Math.PI / 2), C('#4f9a3a', { r: 0.5 }), 0.12, 0.03, -0.04);
+    const gin = new THREE.Group(); for (let i = 0; i < 4; i++) add(gin, new THREE.SphereGeometry(0.02, 8, 6).scale(1.4, 0.8, 1), C('#d9b878', { r: 0.7 }), (i % 2) * 0.03, 0, Math.floor(i / 2) * 0.025 - 0.012); gin.position.set(-0.06, 0.028, 0.04); g.add(gin);
+    for (let i = 0; i < 2; i++) { add(g, new THREE.SphereGeometry(0.024, 12, 8).scale(1, 0.9, 1), C('#f7f2e8', { r: 0.5 }), 0.05 + i * 0.05, 0.034, 0.045); add(g, new THREE.ConeGeometry(0.008, 0.02, 8), C('#e9dcc0', { r: 0.6 }), 0.05 + i * 0.05, 0.062, 0.045); }
+  },
+  kombu(g) { add(g, box(0.24, 0.012, 0.12), C('#24301e', { r: 0.6 })); add(g, T(box(0.25, 0.016, 0.05), 0, -0.001, 0), mat('#ffffff', { map: label('kombu', { w: 384, h: 80, bg: '#e9dcb4', fg: '#24301e', title: '日高昆布　だし用' }), r: 0.5 })); add(g, T(rbox(0.25, 0.018, 0.13, 0.004), 0, -0.002, 0), film()); },
+  t_shoyu(g) { bottle(g, '#3a1f12', label('t_shoyu', { w: 384, h: 256, twice: true, times: 2, bg: '#f6efdd', fg: '#6b1d0f', title: '醤油', sub: '本醸造' })); },
+  t_black(g) { bottle(g, '#120a06', label('t_black', { w: 384, h: 256, twice: true, times: 2, bg: '#1b1b1b', fg: '#f2c94c', title: 'たまり', sub: '濃口醤油' })); },
+  t_shio(g) { pouch(g, 0.13, 0.17, 0.05, label('t_shio', { w: 256, h: 320, bg: '#ffffff', fg: '#1d4f91', title: '天然塩', sub: '海の塩', band: '#1d4f91', bandText: 'しおダレ用' }), '#ffffff'); },
+  t_miso(g) { tub(g, 0.075, 0.09, label('t_miso', { w: 768, h: 160, twice: true, times: 3, bg: '#a35d1c', fg: '#fff5e6', title: '味噌', sub: '合わせ' }), '#6b3a10'); },
+  t_goma(g) { tub(g, 0.05, 0.08, label('t_goma', { w: 768, h: 160, twice: true, times: 3, bg: '#e6cf9c', fg: '#5a3a10', title: '練りごま' }), '#5a3a10'); const b = new THREE.Group(); bottle(b, '#b3221a', label('t_goma2', { w: 256, h: 200, twice: true, times: 2, bg: '#b3221a', fg: '#ffffff', title: 'ラー油' })); b.scale.setScalar(0.5); b.position.set(0.09, 0, 0.02); g.add(b); },
   d_bowl(g) { for (let i = 0; i < 3; i++) { const s = new THREE.Group(); bowlBase(s, 'bowl'); s.position.y = i * 0.032; g.add(s); } },
   d_bowlS(g) { for (let i = 0; i < 3; i++) { const s = new THREE.Group(); bowlBase(s, 'bowlS'); s.position.y = i * 0.026; g.add(s); } },
   d_plate(g) { for (let i = 0; i < 5; i++) { const s = new THREE.Group(); plateBase(s); s.position.y = i * 0.012; g.add(s); } },
@@ -136,7 +169,7 @@ export function ingredientMesh(id) {
   const p = INGREDIENTS[id]; if (!p) return new THREE.Group();
   const k = 'ing|' + id;
   let o = CACHE.get(k);
-  if (!o) { const g = new THREE.Group(); if (p.soup) soupSet(g, p.soup); else (MAKE[id] || MAKE.butter)(g); o = bakeGroup(g); CACHE.set(k, o); }
+  if (!o) { const g = new THREE.Group(); (MAKE[id] || MAKE.butter)(g); o = bakeGroup(g); CACHE.set(k, o); }
   return o.clone();
 }
 const CACHE = new Map();

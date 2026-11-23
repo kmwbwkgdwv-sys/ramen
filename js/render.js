@@ -1,9 +1,11 @@
 // ===== 描画：店の状態 → 3Dシーン =====
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { FIXTURES, TOPPINGS, SOUPS, GRIDDLE, BUILDING, HALL, DRONE_PAD, RICE_READY, SOUP_READY, localToWorld, basketPos, passPos, CHOHAN_T } from './data.js';
+import { FIXTURES, TOPPINGS, SOUPS, BROTHS, TARES, GRIDDLE, BUILDING, HALL, DRONE_PAD, RICE_READY, SOUP_READY, localToWorld, basketPos, passPos, CHOHAN_T } from './data.js';
 import { buildFixture, ANCHOR } from './models/fixtures.js';
-import { dishMesh, dishKey, dirtyMesh, toolMesh, basketMesh, grillFood, panFill, toppingDish, noodleBall, soupSurface, riceSurface, pile } from './models/food.js';
+import { dishMesh, dishKey, dirtyMesh, cleanMesh, toolMesh, basketMesh, grillFood, panFill, toppingDish, noodleBall, soupSurface, riceSurface, pile, potContents, dryRackMesh, washingMesh, cashMesh, tareBowl, tarePot } from './models/food.js';
+import { potHeat, potAku } from './sim.js';
+const DRIP = new THREE.CylinderGeometry(0.004, 0.05, 0.22, 10, 1, true);
 import { ingredientMesh } from './models/products.js';
 import { setShooter, thumbTick, thumbCanvas, onThumb, menuKey as menuKeyOf } from './thumbs.js';
 const SIDE_DISH = { rice: { k: 'bowlS', side: 'rice' }, chadon: { k: 'bowlS', side: 'rice', tp: ['chashu', 'negi'] }, gyoza: { k: 'plate', side: 'gyoza', q: 90 }, karaage: { k: 'plate', side: 'karaage', q: 90 }, beer: { k: 'mug', side: 'beer', fill: 1 } };
@@ -177,19 +179,20 @@ export class Renderer {
     const parts = [];
     for (const f of store.fixtures) {
       const d = FIXTURES[f.t];
-      if (d.pot) parts.push('p' + f.id + (f.pot ? `${f.pot.k}${Math.ceil(f.pot.sv / 3)}${f.pot.fire}${clk - f.pot.t0 >= SOUP_READY ? 1 : 0}` : '-'));
-      if (d.baskets) parts.push('b' + f.id + f.bk.map((x) => (x ? Math.min(3, Math.floor((clk - x.t0) / 12)) : '-')).join(''));
+      if (d.pot) parts.push('p' + f.id + (f.pot ? `${f.pot.w}${f.pot.b}${JSON.stringify(f.pot.n)}${Math.ceil(f.pot.sv / 3)}${f.pot.fire}${f.pot.b ? Math.min(4, Math.floor(potHeat(f.pot, clk) / BROTHS[f.pot.b].ready * 4)) : 0}${Math.round(potAku(f.pot, clk) * 5)}` : '-'));
+      if (d.baskets) parts.push('b' + f.id + f.bk.map((x) => (x ? Math.min(3, Math.floor((clk - x.t0) / 12)) + (x.dr && clk - (x.dt || 0) < 0.6 ? 'L' + Math.floor(x.dr * 3) : '') : '-')).join(''));
       if (d.griddle) parts.push('g' + f.id + (f.gr ? Math.min(4, Math.floor((clk - f.gr.t0) / 8)) : '-'));
       if (d.rice) parts.push('r' + f.id + (f.rc ? (clk - f.rc.t0 >= RICE_READY ? 'y' : 'n') + f.rc.sv : '-'));
       if (d.board) parts.push('j' + f.id + (f.job ? f.job.tid + Math.floor(f.job.p * 4) : '-'));
       if (d.pass) parts.push('s' + f.id + f.ps.map((x) => (x ? dishKey(x) : '-')).join(';'));
       if (d.seats) parts.push('d' + f.id + (f.dd || []).map((a) => a.join('.')).join(';'));
-      if (d.topping) parts.push('t' + f.id);
+      if (d.topping) parts.push('t' + f.id + (f.tj ? f.tj.k + Math.floor(f.tj.p * 3) : '') + Object.entries(store.tare || {}).map(([k, n]) => k + Math.min(3, Math.ceil(n / 10))).join(''));
+      if (d.sink) parts.push('k' + f.id + (f.wp ? f.wk + Math.floor(f.wp * 3) : ''));
     }
     parts.push('P' + Object.entries(store.prep || {}).map(([k, v]) => k + Math.min(4, Math.ceil(v / Math.max(1, (TOPPINGS[k]?.per || 20) / 4)))).join(','));
-    parts.push('D' + Object.values(store.dish || {}).map((n) => Math.min(6, n)).join(',') + 'X' + Object.values(store.dirty || {}).map((n) => Math.min(8, n)).join(','));
+    parts.push('D' + Object.values(store.dish || {}).map((n) => Math.min(6, n)).join(',') + 'X' + Object.values(store.dirty || {}).map((n) => Math.min(8, n)).join(',') + 'Y' + Object.values(store.dry || {}).join(','));
     parts.push('V' + (dyn?.sv || []).map(([fid, si, i, dd, frac]) => `${fid}.${si}.${i}.${dishKey(dd, frac)}`).join(';'));
-    parts.push('C' + (dyn?.ch ? dyn.ch.ph + (dyn.ch.d || []).join('') : ''));
+    parts.push('C' + (dyn?.ch ? dyn.ch.ph + (dyn.ch.d || []).join('') + JSON.stringify(dyn.ch.b || {}) : ''));
     const key = parts.join('|');
     if (key === this._propKey) return;
     this._propKey = key;
@@ -202,11 +205,11 @@ export class Renderer {
       const d = FIXTURES[f.t];
       if (f.br) continue;
       if (d.pot && f.pot) {
-        const A = ANCHOR[f.t] || ANCHOR.pot, fill = Math.max(0.15, f.pot.sv / d.pot.sv);
-        put(f, SOUPS[f.pot.k] ? soupSurface(f.pot.k, A.r - 0.01) : disc('#888', A.r - 0.01, 0), 0, A.y - 0.04 + (A.h - 0.06) * fill, 0);
+        const A = ANCHOR[f.t] || ANCHOR.pot, P = f.pot, fill = P.b ? Math.max(0.2, (P.sv + 2) / (d.pot.sv + 2)) : 0.85;
+        const pc = potContents(P, A.r - 0.012, potHeat(P, clk), potAku(P, clk)); if (pc) put(f, pc, 0, A.y - 0.04 + (A.h - 0.06) * fill, 0);
         if (f.pot.fire) { const ring = new THREE.Group(); for (let i = 0; i < 12; i++) { const fl = new THREE.Mesh(FLAME, mat(0x4aa8ff, { e: 0x2a6aff, ei: 1.4, t: true, op: 0.85 })); fl.position.set(Math.cos(i / 12 * 6.28) * 0.12, 0, Math.sin(i / 12 * 6.28) * 0.12); ring.add(fl); } put(f, ring, 0, 0.43, 0); this._flames.push(ring); }
       }
-      if (d.baskets) f.bk.forEach((x, i) => { const [bx, bz] = basketPos(f.t, i); put(f, basketMesh(!!x, x ? clk - x.t0 : 0), bx, ANCHOR.boilerY + (x ? -0.02 : 0.03), bz); });
+      if (d.baskets) f.bk.forEach((x, i) => { const [bx, bz] = basketPos(f.t, i), up = x && x.dr && clk - (x.dt || 0) < 0.6; const o = put(f, basketMesh(!!x, x ? clk - x.t0 : 0), bx, ANCHOR.boilerY + (up ? 0.26 : x ? -0.02 : 0.03), bz + (up ? -0.06 : 0)); if (up) { o.rotation.x = -0.35; const drip = new THREE.Mesh(DRIP, mat(0x9fd8ff, { t: true, op: 0.55, e: 0x3a86c8, ei: 0.3 })); put(f, drip, bx, ANCHOR.boilerY + 0.07, bz - 0.06); } });
       if (d.griddle && f.gr) {
         const sec = clk - f.gr.t0;
         if (d.griddle === 'gyoza') put(f, grillFood('gyoza', sec), 0, ANCHOR.griddleY, 0.05);
@@ -222,7 +225,16 @@ export class Renderer {
         const kinds = ['bowl', 'bowlS', 'plate', 'mug'];
         kinds.forEach((k, ci) => { const n = Math.min(6, store.dish?.[k] || 0); if (!n) return; const list = Array(Math.min(3, n)).fill(k); ANCHOR.rack.ys.forEach((y, li) => { if (n > li * 2) put(f, dirtyClean(list.slice(0, k === 'mug' ? 1 : 3), k), ANCHOR.rack.xs[ci], y, 0); }); });
       }
-      if (d.sink) { const list = []; for (const [k, n] of Object.entries(store.dirty || {})) for (let i = 0; i < Math.min(4, n); i++) list.push(k); if (list.length) put(f, dirtyMesh(list.slice(0, 8)), ANCHOR.sink[0], ANCHOR.sink[1], ANCHOR.sink[2]); }
+      if (d.sink) {
+        const list = []; for (const [k, n] of Object.entries(store.dirty || {})) for (let i = 0; i < Math.min(4, n); i++) list.push(k);
+        if (f.wp && list.length) list.pop();
+        if (list.length) put(f, dirtyMesh(list.slice(0, 8)), ANCHOR.sink[0] + 0.08, ANCHOR.sink[1], ANCHOR.sink[2] + 0.06);
+        if (f.wp && f.wk) put(f, washingMesh(f.wk, f.wp), ANCHOR.sink[0] - 0.08, ANCHOR.sink[1] + 0.16, ANCHOR.sink[2] - 0.05);
+        const dl = []; for (const [k, n] of Object.entries(store.dry || {})) for (let i = 0; i < n; i++) dl.push(k);
+        if (dl.length) put(f, dryRackMesh(dl.slice(0, 12)), ANCHOR.dryRack[0], ANCHOR.dryRack[1], ANCHOR.dryRack[2]);
+      }
+      if (d.topping && f.tj) put(f, tareBowl(f.tj.k, f.tj.p), ANCHOR.tareMix[0], ANCHOR.tareMix[1], ANCHOR.tareMix[2]);
+      if (d.topping) Object.keys(TARES).forEach((k, i) => { if ((store.tare?.[k] || 0) > 0) put(f, tarePot(k, Math.min(1, (store.tare[k] || 0) / TARES[k].per)), ANCHOR.tarePots[0] + i * 0.13, ANCHOR.tarePots[1], ANCHOR.tarePots[2]); });
       if (d.pass) f.ps.forEach((x, i) => { if (!x) return; const [px] = passPos(f.t, i); put(f, dishMesh(x), px, ANCHOR.passY, 0); });
       if (d.seats) d.seats.forEach((_, si) => {
         const [sx, sz] = d.spots[si];
@@ -231,7 +243,7 @@ export class Renderer {
         const sv = servedAt.get(f.id + ':' + si);
         if (sv) sv.forEach(([i, dish, frac], k) => { const off = k === 0 ? 0 : (k % 2 ? -1 : 1) * 0.17; const o = dishMesh(dish, frac); put(f, o, sx + off * (isCounterT(f.t) ? 0.6 : 1), d.top, sz + (k ? (Math.sign(sz) || -1) * 0.04 : 0)); });
       });
-      if (f.t === 'chohan') this._dice(f, dyn?.ch);
+      if (f.t === 'chohan') { this._dice(f, dyn?.ch); Object.values(dyn?.ch?.b || {}).forEach((b, i) => { put(f, cashMesh(b[1]), (b[0] === 'cho' ? -0.55 : 0.55) + (i % 3 - 1) * 0.06, 0.32, 0.25 + Math.floor(i / 3) * 0.12, i * 0.4); }); }
     }
   }
   _dice(f, ch) {
@@ -435,8 +447,8 @@ export class Renderer {
   // 手に持っている物（料理・下げた食器・消火器・手裏剣）
   syncHands(list, fp) {
     const alive = new Set();
-    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t);
-    const make = (hd) => (hd.t === 'dish' ? dishMesh(hd.d) : hd.t === 'dirty' ? dirtyMesh(hd.a) : toolMesh(hd.t));
+    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'clean' ? 'c' + hd.a.join('.') : hd.t);
+    const make = (hd) => (hd.t === 'dish' ? dishMesh(hd.d) : hd.t === 'dirty' ? dirtyMesh(hd.a) : hd.t === 'clean' ? cleanMesh(hd.a) : toolMesh(hd.t));
     const get = (key, hd) => {
       const k = key + '|' + itemKey(hd); alive.add(k);
       let o = this.hands.get(k);
@@ -467,7 +479,7 @@ export class Renderer {
       if (hd.t === 'ext' || hd.t === 'shuri') { _m.compose(_v.set(0, -0.36, 0.08), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.armR.matrixWorld, _m); }
       else { _m.compose(_v.set(0, 1.02 * H, 0.34), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.root.matrixWorld, _m); }
       o.matrixWorldNeedsUpdate = true;
-      ch.carry = hd.t === 'dish' || hd.t === 'dirty';
+      ch.carry = hd.t === 'dish' || hd.t === 'dirty' || hd.t === 'clean';
     }
     for (const [k, o] of this.hands) if (!alive.has(k)) { this.handRoot.remove(o); this.hands.delete(k); }
   }
@@ -590,6 +602,11 @@ export class Renderer {
     for (const [x, z] of extra) put('c', x, z, 0.85, 0.85);
     this.blobs.end();
   }
+  // 投げた食器が飛んでいく
+  flyFx(e) {
+    const o = dirtyMesh(e.a || ['bowl']); o.position.set(e.x0, 1.3, e.z0); this.scene.add(o);
+    this._fly = this._fly || []; this._fly.push({ o, t: 0, e });
+  }
   // 「次にやること」の矢印（設備の上でゆれる）
   setGuide(pos, urgent) {
     if (!this.guide) {
@@ -606,6 +623,7 @@ export class Renderer {
   }
   update(dt) {
     this.t += dt; this._updateFx(dt); this._updateSpray(dt);
+    if (this._fly?.length) for (const F of [...this._fly]) { F.t += dt / 0.55; const k = Math.min(1, F.t), e = F.e; F.o.position.set(e.x0 + (e.x1 - e.x0) * k, 1.3 + (e.y1 - 1.3) * k + Math.sin(k * Math.PI) * 0.9, e.z0 + (e.z1 - e.z0) * k); F.o.rotation.x += dt * 9; if (k >= 1) { this.scene.remove(F.o); this._fly.splice(this._fly.indexOf(F), 1); } }
     if (this.guide?.visible) { const k = Math.sin(this.t * 4.2); this.guide.position.y = this._gy + k * 0.07; this.guide.rotation.y += dt * 2.2; const s = 1 + 0.25 * (0.5 + 0.5 * Math.sin(this.t * 4.2 + 1.5)); this.guideRing.scale.set(s, s, s); }
   }
   render() {
