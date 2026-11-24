@@ -3,7 +3,7 @@ import { h, $, modal, toast, confirmBox, promptBox } from './ui.js';
 import {
   FIXTURES, FIXTURE_CATS, SOUPS, BROTHS, TARES, POT_PER, CASH_CHOICES, DRY_MAX, soupRecipe, TOPPINGS, SIDES, HARD, DISHES, DIRTY_MAX, INGREDIENTS, ING_LIST, ING_CATS, STAFF_ROLES, STAFF_SLOTS, STAFF_MAX, SPEEDS, STAFF_NAMES, GAMBLES, BET_CHIPS, CHOHAN_FEE, CHOHAN_T, SLOT_PAY, SLOT_CHERRY2, SLOT_SYMS,
   hasStaffLicense, fixtureUnlocked, staffLimit, xpNeed, closeTime, CHAT_PRESETS, SHOP, ALL_COLS, expandTargets, MAX_LEVEL, unlocksAt, ticketLimit, ingUnlocked, SHIPPING_FEE, ORDER_MAX,
-  menuValue, menuLimit, menuCost, MENU_RAMEN_MAX, TOP_MAX, OPEN_TIME, carryInfo, ingShort, CHOHAN_ZORO, SLOT_JP, PAN_MAX, CUT_N, staffEq,
+  menuValue, menuLimit, menuCost, MENU_RAMEN_MAX, TOP_MAX, OPEN_TIME, carryInfo, ingShort, CHOHAN_ZORO, SLOT_JP, PAN_MAX, CUT_N, staffEq, noodleLabel,
 } from './data.js';
 import { orderTotal, orderCost, fridgeCap, fridgeUsed, customerFactors, repStars, menuAvailable, dayWaste, crateItems, totalProfit } from './sim.js';
 import { yen, fmtTime, mulberry32 } from './util.js';
@@ -56,7 +56,7 @@ export class GameUI {
   }
   // 手に持っている物（絵と説明）
   setHand(hd) {
-    const key = !hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) + (hd.d.men != null ? Math.floor(hd.d.men) : '') + (hd.d.fill != null ? Math.round(hd.d.fill * 20) : '') : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'pot' ? 'p' + hd.ft + Math.round(hd.w * 20) + (hd.dirty ? 'd' + Math.round((hd.cl || 0) * 10) : '') : hd.t === 'ing' ? 'i' + hd.k + hd.n + Math.round((hd.ws || 0) * 10) : hd.t === 'cash' ? 'c' + hd.v : hd.t === 'keep' ? 'k' + hd.b + hd.sv : hd.t + (hd.k || '') + (hd.n ?? Math.round((hd.u || 0) * 20));
+    const key = !hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) + (hd.d.men != null ? Math.floor(hd.d.men) : '') + (hd.d.fill != null ? Math.round(hd.d.fill * 20) : '') : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'pot' ? 'p' + hd.ft + Math.round(hd.w * 20) + (hd.dirty ? 'd' + Math.round((hd.cl || 0) * 10) : '') : hd.t === 'ing' ? 'i' + hd.k + hd.n + Math.round((hd.ws || 0) * 10) : hd.t === 'cash' ? 'c' + hd.v : hd.t === 'keep' ? 'k' + hd.b + hd.sv : hd.t === 'tebo' ? 'T' + Math.round(hd.men) + Math.round((hd.dr || 0) * 10) : hd.t + (hd.k || '') + (hd.n ?? Math.round((hd.u || 0) * 20));
     if (key === this.handEl._k) return;
     this.handEl._k = key; this.handEl.innerHTML = ''; this.handEl.classList.toggle('hidden', !hd);
     if (!hd) return;
@@ -69,6 +69,8 @@ export class GameUI {
     else if (hd.t === 'cash') this.handEl.append(pimg('tool:cash', '💴', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, '手持ちのお金'), h('b', {}, yen(hd.v))));
     else if (hd.t === 'top') this.handEl.append(pimg('tp:' + hd.k, TOPPINGS[hd.k]?.icon || '🥢', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, '→ 丼・トッピング台・冷蔵庫'), h('b', {}, `切った${TOPPINGS[hd.k]?.name || ''}（1人前）`)));
     else if (hd.t === 'pack') this.handEl.append(pimg('ing:' + hd.k, INGREDIENTS[hd.k]?.icon || '📦', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, INGREDIENTS[hd.k]?.dish ? '→ 食器棚' : '→ 冷蔵庫'), h('b', {}, `${ingShort(hd.k)}（${hd.n}${INGREDIENTS[hd.k]?.unit || ''}）`)));
+    else if (hd.t === 'tebo') this.handEl.append(h('span', { class: 'hc big-ic' }, '♨️'), h('div', { class: 'hc-t' }, h('small', {}, (hd.dr || 0) >= 1 ? '→ 作業台の丼' : '長押しで湯切り'), h('b', {}, `てぼ：麺 ${hd.men.toFixed(0)}秒（${noodleLabel(hd.men)}）・湯切り ${Math.round(Math.min(1, hd.dr || 0) * 100)}%`)));
+    else if (hd.t === 'box') this.handEl.append(pimg('ing:' + hd.k, INGREDIENTS[hd.k]?.icon || '📦', 'hc'), h('div', { class: 'hc-t' }, h('small', {}, INGREDIENTS[hd.k]?.dish ? '段ボール → 食器棚' : '段ボール → 冷蔵庫'), h('b', {}, `📦 ${INGREDIENTS[hd.k]?.name || ''} ×${hd.n}パック`)));
     else if (hd.t === 'keep') this.handEl.append(h('span', { class: 'hc big-ic' }, '🫙'), h('div', { class: 'hc-t' }, h('small', {}, '→ 冷蔵庫・空の寸胴鍋'), h('b', {}, `スープ（${BROTHS[hd.b]?.short || ''}）${hd.sv}杯分`)));
   }
   show(v) { this.hud.classList.toggle('hidden', !v); }
@@ -216,29 +218,6 @@ export class GameUI {
     const m = modal('🍽️ どの器を取る？', [grid], { onClose: () => this.closed() });
     this.opened(m);
   }
-  openToppingPicker(fid) {
-    const g = this.g;
-    const body = h('div');
-    const draw = () => {
-      const st = g.store, hd = g.hand();
-      if (hd?.t !== 'dish') { m.close(); return; }
-      const have = hd.d.tp || [], target = g.targetRecipe(hd.d);
-      body.innerHTML = '';
-      body.append(h('div', { class: 'tp-now' }, pimg('d:' + dishKey(hd.d), '🍜', 'big', { d: hd.d }), h('div', {}, h('b', {}, 'いまの丼'), h('div', { class: 'small' }, have.length ? have.map((x) => TOPPINGS[x]?.name).join('・') : 'トッピングなし'))));
-      if (target) body.append(h('div', { class: 'tp-target' }, `📋「${target.name}」：`, ...target.tp.map((x) => h('span', { class: 'tpt' + (have.includes(x) ? ' ok' : '') }, (have.includes(x) ? '✅' : '⬜') + TOPPINGS[x]?.icon + TOPPINGS[x]?.name)),
-        target.miss.some((x) => st.fixtures.find((o) => o.id === fid)?.tp?.[x] > 0) ? h('button', { class: 'btn small', onclick: () => { for (const tid of target.miss) if (st.fixtures.find((o) => o.id === fid)?.tp?.[tid] > 0) g.act({ t: 'top', fid, tid }); setTimeout(draw, 120); } }, '🎯 注文どおりにのせる') : null));
-      body.append(h('div', { class: 'pick-grid tp' }, Object.entries(TOPPINGS).filter(([, t]) => st.level >= t.lv).map(([k, t]) => {
-        const n = st.fixtures.find((o) => o.id === fid)?.tp?.[k] || 0, on = have.includes(k);
-        return h('button', { class: 'pick small' + (n ? '' : ' none') + (on ? ' on' : '') + (target?.tp.includes(k) ? ' want' : ''), onclick: () => { if (on) return; g.act({ t: 'top', fid, tid: k }); setTimeout(draw, 120); } },
-          pimg('tp:' + k, t.icon, 'pi'), h('b', {}, t.name), h('small', {}, on ? 'のせた' : `${n}人前`));
-      })));
-      body.append(h('p', { class: 'muted small' }, `トッピング台のバットに並べた物からのせます（まな板で切って1人前ずつ並べる）。${TOP_MAX}種類まで。注文にないトッピングを多くのせると少し減点、足りないと大きく減点されます`));
-      body.append(h('button', { class: 'btn big', onclick: () => m.close() }, '盛り付け完了'));
-    };
-    const m = modal('🥢 トッピング', [body], { onClose: () => this.closed() });
-    this.opened(m); draw();
-  }
-  // トッピング台のバットから1人前取る
   openPanPicker(fid) {
     const g = this.g, f = g.store.fixtures.find((o) => o.id === fid); if (!f) return;
     const list = Object.entries(f.tp || {}).filter(([k, n]) => TOPPINGS[k] && n > 0);
@@ -266,7 +245,7 @@ export class GameUI {
     const g = this.g, cart = new Map();
     let cat = 'base';
     const body = h('div', { class: 'pc-body' }), tabs = h('div', { class: 'tabs pc-apps' });
-    const TABS = [['order', '🚁', '仕入れ'], ['menu', '📜', 'メニュー'], ['staff', '🧑‍🍳', 'アルバイト'], ['rep', '💬', '評判'], ['store', '🏮', 'お店'], ['expand', '🗺️', '拡張']];
+    const TABS = [['order', '🚁', '仕入れ'], ['equip', '🛠️', '設備'], ['menu', '📜', 'メニュー'], ['staff', '🧑‍🍳', 'アルバイト'], ['rep', '💬', '評判'], ['store', '🏮', 'お店'], ['expand', '🗺️', '拡張']];
     const total = h('b'), orderBtn = h('button', { class: 'btn' }, '注文する');
     const draw = () => {
       const st = g.store;
@@ -302,9 +281,10 @@ export class GameUI {
         orderBtn.onclick = () => { g.act({ t: 'order', items }); cart.clear(); draw(); };
         body.append(ctabs, grid, h('div', { class: 'cartbar' },
           h('div', { class: 'cart-l' }, h('div', {}, h('b', { class: 'cart-n' + (used > cap ? ' full' : '') }, `🧊 冷蔵庫 ${used}/${cap}`), items.length ? h('button', { class: 'cclear', onclick: () => { cart.clear(); draw(); } }, 'からにする') : null),
-            h('div', { class: 'muted small' }, ...(items.length ? items.map(([id, k]) => h('span', { class: 'cart-it' }, pimg('ing:' + id, INGREDIENTS[id].icon, 'ci'), '×' + k)) : ['＋でカートに入れてね（ドローンが勝手口の外に段ボールで届けます。中身は自分で冷蔵庫へ）']))),
+            h('div', { class: 'muted small' }, ...(items.length ? items.map(([id, k]) => h('span', { class: 'cart-it' }, pimg('ing:' + id, INGREDIENTS[id].icon, 'ci'), '×' + k)) : ['＋でカートに入れてね（ドローンが勝手口の外に、1つの商品につき1つの段ボールで届けます。持って冷蔵庫へ）']))),
           h('div', { class: 'cart-r' }, h('div', { class: 'cart-sum' }, items.length ? `商品 ${yen(orderCost(items))} ＋ 送料 ${yen(SHIPPING_FEE)}` : `送料 ${yen(SHIPPING_FEE)}／回`), h('div', {}, '合計 ', total, h('span', { class: 'muted small' }, ` ／ 資金 ${yen(st.money)}`)), orderBtn)));
-      } else if (tab === 'menu') body.append(this.menuPanel(st, draw));
+      } else if (tab === 'equip') body.append(this.equipPanel(st, draw));
+      else if (tab === 'menu') body.append(this.menuPanel(st, draw));
       else if (tab === 'rep') body.append(repPanel(st));
       else if (tab === 'staff') body.append(this.staffPanel(st, draw));
       else if (tab === 'expand') body.append(this.expandPanel(st, draw));
@@ -319,7 +299,47 @@ export class GameUI {
     };
     const m = modal('💻 パソコン', [h('div', { class: 'pc-screen' }, tabs, body)], { wide: true, cls: 'pcm pcdesk', onClose: () => this.closed() });
     this.opened(m); draw();
-    this._redraw = draw; this._live = () => { if (tab === 'order' || tab === 'rep') draw(); };
+    this._redraw = draw; this._live = () => { if (tab === 'order' || tab === 'rep' || tab === 'equip') draw(); };
+  }
+  // 設備を買う（冷蔵庫・茹で麺機・洗い場・鍋・席・台など）。買った物は勝手口の外に大きい段ボールで届く
+  equipPanel(st, draw) {
+    const g = this.g, R = g.R, need = [];
+    if (!FIXTURE_CATS[this._ecat]) this._ecat = 'kitchen';
+    const ctabs = h('div', { class: 'tabs scroll small' });
+    for (const [k, n] of Object.entries(FIXTURE_CATS)) ctabs.append(h('button', { class: 'tab' + (k === this._ecat ? ' on' : ''), onclick: () => { this._ecat = k; draw(); } }, n));
+    const grid = h('div', { class: 'pgrid ptiles eqgrid' });
+    const ORD = ['fridge', 'fridge2', 'boiler', 'boiler6', 'pot', 'pot2', 'sink', 'board', 'topping', 'worktable', 'dishrack', 'pass'], oi = (id) => (ORD.includes(id) ? ORD.indexOf(id) : 99);
+    const list = Object.entries(FIXTURES).filter(([, f]) => f.cat === this._ecat && !f.fixed && !f.keep).sort((a, b) => oi(a[0]) - oi(b[0]) || (a[1].lv || 1) - (b[1].lv || 1) || a[1].price - b[1].price);
+    for (const [id, f] of list) {
+      const ok = fixtureUnlocked(id, st.level), url = R?.thumbUrl?.(id, st.color);
+      if (url === null && R?.thumbUrl) need.push(id);
+      const own = st.fixtures.filter((x) => x.t === id), stN = own.filter((x) => x.st).length, box = st.crates.filter((c) => c.ft === id);
+      const tkFull = id === 'ticket' && own.length + box.length >= ticketLimit(st.level);
+      const buy = (stf) => {
+        if (f.price > st.money) { toast('お金が足りません', 'warn'); g.app?.sfx?.play('err'); return; }
+        if (tkFull) { toast(`券売機はいま${ticketLimit(st.level)}台までです`, 'warn'); g.app?.sfx?.play('err'); return; }
+        g.act({ t: 'buy', ft: id, st: stf ? 1 : 0 }); setTimeout(draw, 150);
+      };
+      const poor = f.price > st.money || tkFull;
+      grid.append(h('div', { class: 'ptile eqtile' + (ok ? '' : ' locked'), title: f.desc || '' },
+        url ? h('img', { class: 'eqthumb', src: url, alt: f.name }) : h('span', { class: 'pe tile' }, f.icon),
+        h('div', { class: 'pn' }, f.name),
+        f.desc ? h('div', { class: 'pm eqdesc' }, f.desc) : null,
+        h('div', { class: 'pm' + (own.length ? ' good' : '') }, own.length ? `持っている ${own.length}台${stN ? `（バイト用${stN}）` : ''}` : '持っていない'),
+        box.length ? h('div', { class: 'pm eqbox' }, `📦 勝手口の外に${box.length}箱`) : null,
+        ok ? h('div', { class: 'eqbuy' }, h('b', { class: 'eqprice' }, yen(f.price)),
+          h('button', { class: 'btn small' + (poor ? ' dim' : ''), onclick: () => buy(false) }, '🛒 買う'),
+          staffEq(id) ? h('button', { class: 'btn small ghost stf' + (poor ? ' dim' : ''), onclick: () => buy(true) }, '🧑‍🍳 バイト用で買う') : null)
+          : h('div', { class: 'lock' }, `🔒 お店 Lv.${f.lv}`, h('small', {}, yen(f.price)))));
+    }
+    if (need.length) R.requestThumbs(need, st.color, () => { if (this._redraw === draw) draw(); });
+    const boxes = st.crates.filter((c) => c.ft).length;
+    return h('div', { class: 'eq-wrap' }, ctabs,
+      this._ecat === 'kitchen' ? h('div', { class: 'bnote' }, '🧑‍🍳 アルバイトは「バイト用」の設備でしか調理・洗い物をしません（レジ・冷蔵庫・食器棚・受け渡し台は共用）') : null,
+      grid,
+      h('div', { class: 'cartbar eqbar' },
+        h('div', { class: 'cart-l muted small' }, `📦 買った設備は勝手口の外に大きい段ボールで届きます。持って、置きたい場所で「開けて置く」。動かす・売るは🔨建築モード${boxes ? `（いま${boxes}箱届いています）` : ''}`),
+        h('div', { class: 'cart-r' }, h('div', {}, '資金 ', h('b', {}, yen(st.money))))));
   }
   menuPanel(st, draw) {
     const g = this.g, wrap = h('div', { class: 'menu-panel' });

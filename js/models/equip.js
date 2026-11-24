@@ -8,7 +8,7 @@ import { mat, smat, T, box, rbox, cyl, sph, lathe, plane, torus, cone, add, M, s
 export const ANCHOR = {
   pot: { y: 0.5, r: 0.27, h: 0.42 }, pot2: { y: 0.5, r: 0.33, h: 0.48 },
   boilerY: 0.9,
-  panY: 0.93, pans: (w) => { const out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; },
+  panY: 0.93, pans: (w) => { const out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; }, // data.js の toppingPans と同じ並び
   rack: { ys: [0.12, 0.6, 1.08], xs: [-0.42, -0.14, 0.14, 0.42] },
   sink: [0.25, 0.72, 0], dryRack: [-0.38, 0.895, -0.04], tareMix: [0.5, 0.9, 0.26], tarePots: [-0.3, 0.9, 0.28], passY: 1.06, workY: 0.86, griddleY: 0.93, fryerY: 0.86, riceY: 0.95, beerY: 1.0,
 };

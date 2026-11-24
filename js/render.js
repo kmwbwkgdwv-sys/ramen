@@ -187,7 +187,7 @@ export class Renderer {
     for (const f of store.fixtures) {
       const d = FIXTURES[f.t];
       if (d.pot) parts.push('p' + f.id + (f.pot ? `${f.pot.w}${f.pot.b}${JSON.stringify(f.pot.n)}${Math.ceil(f.pot.sv / 3)}${f.pot.fire}${f.pot.b ? Math.min(4, Math.floor(potHeat(f.pot, clk) / BROTHS[f.pot.b].ready * 4)) : 0}${Math.round(potAku(f.pot, clk) * 5)}` : '-'));
-      if (d.baskets) parts.push('b' + f.id + f.bk.map((x) => (x ? Math.min(3, Math.floor((clk - x.t0) / 12)) + (x.dr && clk - (x.dt || 0) < 0.6 ? 'L' + Math.floor(x.dr * 3) : '') : '-')).join(''));
+      if (d.baskets) parts.push('b' + f.id + f.bk.map((x, i) => (f.bo?.[i] ? 'o' : x ? Math.min(3, Math.floor((clk - x.t0) / 12)) + (x.dr && clk - (x.dt || 0) < 0.6 ? 'L' + Math.floor(x.dr * 3) : '') : '-')).join(''));
       if (d.griddle) parts.push('g' + f.id + (f.gr ? Math.min(4, Math.floor((clk - f.gr.t0) / 8)) : '-'));
       if (d.rice) parts.push('r' + f.id + (f.rc ? (clk - f.rc.t0 >= RICE_READY ? 'y' : 'n') + f.rc.sv : '-'));
       if (d.board) parts.push('j' + f.id + (f.job ? f.job.tid + Math.floor(f.job.p * 4) : '-') + (f.cut ? f.cut.tid + f.cut.n : ''));
@@ -221,7 +221,7 @@ export class Renderer {
         const pc = potContents(P, A.r - 0.012, potHeat(P, clk), potAku(P, clk)); if (pc) put(f, pc, 0, A.y - 0.04 + (A.h - 0.06) * fill, 0);
         if (f.pot.fire) { const ring = new THREE.Group(); for (let i = 0; i < 12; i++) { const fl = new THREE.Mesh(FLAME, mat(0x4aa8ff, { e: 0x2a6aff, ei: 1.4, t: true, op: 0.85 })); fl.position.set(Math.cos(i / 12 * 6.28) * 0.12, 0, Math.sin(i / 12 * 6.28) * 0.12); ring.add(fl); } put(f, ring, 0, 0.43, 0); this._flames.push(ring); }
       }
-      if (d.baskets) f.bk.forEach((x, i) => { const [bx, bz] = basketPos(f.t, i), up = x && x.dr && clk - (x.dt || 0) < 0.6; const o = put(f, basketMesh(!!x, x ? clk - x.t0 : 0), bx, ANCHOR.boilerY + (up ? 0.26 : x ? -0.02 : 0.03), bz + (up ? -0.06 : 0)); if (up) { o.rotation.x = -0.35; const drip = new THREE.Mesh(DRIP, mat(0x9fd8ff, { t: true, op: 0.55, e: 0x3a86c8, ei: 0.3 })); put(f, drip, bx, ANCHOR.boilerY + 0.07, bz - 0.06); } });
+      if (d.baskets) f.bk.forEach((x, i) => { if (f.bo?.[i]) return; const [bx, bz] = basketPos(f.t, i), up = x && x.dr && clk - (x.dt || 0) < 0.6; const o = put(f, basketMesh(!!x, x ? clk - x.t0 : 0), bx, ANCHOR.boilerY + (up ? 0.26 : x ? -0.02 : 0.03), bz + (up ? -0.06 : 0)); if (up) { o.rotation.x = -0.35; const drip = new THREE.Mesh(DRIP, mat(0x9fd8ff, { t: true, op: 0.55, e: 0x3a86c8, ei: 0.3 })); put(f, drip, bx, ANCHOR.boilerY + 0.07, bz - 0.06); } });
       if (d.griddle && f.gr) {
         const sec = clk - f.gr.t0;
         if (d.griddle === 'gyoza') put(f, grillFood('gyoza', sec), 0, ANCHOR.griddleY, 0.05);
@@ -390,7 +390,7 @@ export class Renderer {
   }
   // 届いた食材の段ボール（開けるとふたが開いて、中のパックが見える）
   _foodCrateModel(c) {
-    const g = new THREE.Group(), [w, h, d] = [0.72, 0.46, 0.52], card = smat(surf('cardboard'), 0xc99a62, { r: 0.9 });
+    const g = new THREE.Group(), [w, h, d] = [0.54, 0.36, 0.44], card = smat(surf('cardboard'), 0xc99a62, { r: 0.9 });
     if (!c.op) {
       g.add(new THREE.Mesh(rbox(w, h, d, 0.015), card));
       g.add(new THREE.Mesh(box(0.14, 0.004, d + 0.01).translate(0, h, 0), mat(0xc9a46c, { r: 0.35 })));
@@ -403,13 +403,14 @@ export class Renderer {
       for (const sx of [-1, 1]) { const fl = new THREE.Mesh(box(0.005, d / 2, d - 0.01).translate(0, d / 4, 0), card); fl.position.set(sx * w / 2, h, 0); fl.rotation.z = sx * -1.9; g.add(fl); }
       for (const sz of [-1, 1]) { const fl = new THREE.Mesh(box(w - 0.01, w / 3.2, 0.005).translate(0, w / 6.4, 0), card); fl.position.set(0, h, sz * d / 2); fl.rotation.x = sz * 1.9; g.add(fl); }
       // 中身（パック）を上から少しのぞかせる
-      const show = c.items.slice(0, 4);
-      show.forEach(([k], i) => { const o = ingredientMesh(k); const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()), kk = Math.min(1, 0.3 / Math.max(0.05, sz.x, sz.z)); o.scale.setScalar(kk); o.position.set(-w / 4 + (i % 2) * w / 2, Math.max(0.02, h - sz.y * kk + 0.04), -d / 5 + Math.floor(i / 2) * d / 2.6); g.add(o); });
+      const show = c.items[0] ? Array.from({ length: Math.min(4, c.items[0][1]) }, () => c.items[0]) : [];
+      show.forEach(([k], i) => { const o = ingredientMesh(k); const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3()), kk = Math.min(1, 0.22 / Math.max(0.05, sz.x, sz.z)); o.scale.setScalar(kk); o.position.set(-w / 4 + (i % 2) * w / 2, Math.max(0.02, h - sz.y * kk + 0.04), -d / 5 + Math.floor(i / 2) * d / 2.6); g.add(o); });
     }
     const first = INGREDIENTS[c.items[0]?.[0]];
-    const label = canvasTex(256, 128, (cx, W, H) => { cx.fillStyle = '#fffdf6'; rr(cx, 4, 4, W - 8, H - 8, 14); cx.fill(); cx.font = `64px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(first?.icon || '📦', 50, H / 2); cx.fillStyle = '#3a2a1a'; cx.textAlign = 'left'; cx.font = `900 28px ${FONT}`; cx.fillText('食材', 96, H / 2 - 18); cx.font = `800 20px ${FONT}`; cx.fillText(`${c.items.reduce((t, [, n]) => t + n, 0)}パック`, 96, H / 2 + 18); });
+    const name = c.items[0] ? ingShort(c.items[0][0]) : '食材';
+    const label = canvasTex(256, 128, (cx, W, H) => { cx.fillStyle = '#fffdf6'; rr(cx, 4, 4, W - 8, H - 8, 14); cx.fill(); cx.font = `64px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(first?.icon || '📦', 50, H / 2); cx.fillStyle = '#3a2a1a'; cx.textAlign = 'left'; cx.font = `900 ${name.length > 5 ? 22 : 28}px ${FONT}`; cx.fillText(name.slice(0, 7), 96, H / 2 - 18); cx.font = `800 22px ${FONT}`; cx.fillText(`×${c.items.reduce((t, [, n]) => t + n, 0)}パック`, 96, H / 2 + 18); });
     const lm = new THREE.MeshStandardMaterial({ map: label, roughness: 0.8 });
-    for (const s2 of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.21), lm); p.position.set(0, h * 0.5, s2 * (d / 2 + 0.006)); if (s2 < 0) p.rotation.y = Math.PI; g.add(p); }
+    for (const s2 of [-1, 1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.18), lm); p.position.set(0, h * 0.5, s2 * (d / 2 + 0.006)); if (s2 < 0) p.rotation.y = Math.PI; g.add(p); }
     g.traverse((o) => { if (o.isMesh) { o.castShadow = !this.lite; o.receiveShadow = true; } });
     g.userData.size = [w, h, d];
     return g;
@@ -513,7 +514,7 @@ export class Renderer {
   // 手に持っている物（料理・下げた食器・消火器・手裏剣）
   syncHands(list, fp) {
     const alive = new Set();
-    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'clean' ? 'c' + hd.a.join('.') : hd.t === 'pot' ? `p${hd.ft}${potLv(hd)}${hd.dirty ? 1 : 0}` : hd.t === 'ing' ? `i${hd.k}${Math.min(hd.n, 6)}${(hd.ws || 0) >= 1 ? 'w' : ''}` : hd.t === 'top' ? 't' + hd.k : hd.t === 'keep' ? 'k' + hd.b : hd.t === 'pack' ? 'P' + hd.k : hd.t);
+    const itemKey = (hd) => (!hd ? '' : hd.t === 'dish' ? 'd' + dishKey(hd.d) : hd.t === 'dirty' ? 'x' + hd.a.join('.') : hd.t === 'clean' ? 'c' + hd.a.join('.') : hd.t === 'pot' ? `p${hd.ft}${potLv(hd)}${hd.dirty ? 1 : 0}` : hd.t === 'ing' ? `i${hd.k}${Math.min(hd.n, 6)}${(hd.ws || 0) >= 1 ? 'w' : ''}` : hd.t === 'top' ? 't' + hd.k : hd.t === 'keep' ? 'k' + hd.b : hd.t === 'pack' ? 'P' + hd.k : hd.t === 'tebo' ? 'T' + Math.min(4, Math.floor(hd.men / 8)) : hd.t);
     const make = (hd) => itemMesh(hd);
     const get = (key, hd) => {
       const k = key + '|' + itemKey(hd); alive.add(k);
@@ -530,6 +531,7 @@ export class Renderer {
       if (hd.t === 'shuri') { off = [0.2, -0.24 + bob, -0.4]; rot = [0.3, 0, 0.3]; w = 0.08; }
       if (hd.t === 'dish' && hd.d.k === 'mug') { off = [0.12, -0.32 + bob, -0.42]; w = 0.1; }
       if (hd.t === 'pot') { off = [0, -0.3 + bob, -0.8]; rot = [0.08, 0, 0]; w = 0.34; }
+      if (hd.t === 'tebo') { const sh = (hd.dr || 0) < 1 && fp.shake ? Math.sin(performance.now() / 45) * 0.05 : 0; off = [0.06, -0.2 + bob + sh, -0.46]; rot = [0.2, 0, 0]; w = 0.12; }
       if (o.parent !== this.fpCam) this.fpCam.add(o);
       this.fpCam.matrix.copy(this.camera.matrixWorld); this.fpCam.matrixWorldNeedsUpdate = true;
       _m.compose(_v.set(...off), _q.setFromEuler(_e.set(...rot)), _s.set(1, 1, 1));
@@ -546,9 +548,9 @@ export class Renderer {
       ch.root.updateMatrixWorld(true);
       const hd = e.hand, H = ch.av.height;
       if (hd.t === 'ext' || hd.t === 'shuri') { _m.compose(_v.set(0, -0.36, 0.08), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.armR.matrixWorld, _m); }
-      else { _m.compose(_v.set(0, 1.02 * H, e.hz ?? 0.34), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.root.matrixWorld, _m); }
+      else { const sh = hd.t === 'tebo' && e.an === 'yugiri' ? Math.sin(performance.now() / 45) * 0.06 : 0; _m.compose(_v.set(0, 1.02 * H + (hd.t === 'tebo' ? 0.12 : 0) + sh, e.hz ?? 0.34), _q.identity(), _s.set(1, 1, 1)); o.matrixAutoUpdate = false; o.matrix.multiplyMatrices(ch.root.matrixWorld, _m); }
       o.matrixWorldNeedsUpdate = true;
-      ch.carry = hd.t === 'dish' || hd.t === 'dirty' || hd.t === 'clean' || hd.t === 'pot' || hd.t === 'ing';
+      ch.carry = hd.t === 'dish' || hd.t === 'dirty' || hd.t === 'clean' || hd.t === 'pot' || hd.t === 'ing' || hd.t === 'tebo';
     }
     for (const [k, o] of this.hands) if (!alive.has(k)) { o.removeFromParent(); this.hands.delete(k); }
   }
@@ -865,6 +867,7 @@ export function itemMesh(hd) {
   if (hd.t === 'top') return toppingDish(hd.k);
   if (hd.t === 'keep') return keepMesh(hd.b, hd.sv);
   if (hd.t === 'pack') return ingredientMesh(hd.k);
+  if (hd.t === 'tebo') return basketMesh(true, hd.men || 0);
   return toolMesh(hd.t);
 }
 function itemMeshKey(k) {

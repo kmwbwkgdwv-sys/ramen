@@ -547,3 +547,7 @@ export const THROWABLE = { ing: 1, pack: 1, top: 1, keep: 1 };
 export function fixtureTopY(t) { const d = FIXTURES[t]; if (!d) return 0.9; if (d.cap) return 1.9; if (d.rack) return 1.6; if (d.top) return d.top; if (t === 'pc' || t === 'register' || t === 'ticket') return 1.0; if (['deco', 'sign', 'safety'].includes(d.cat)) return 0.6; return 0.92; }
 // 段ボールの中身の名前（items: [[食材ID, パック数]]）
 export function packName(k) { const p = INGREDIENTS[k]; return p ? `${p.name}（${p.pack}${p.unit}）` : ''; }
+// トッピング台のバット（8つ・奥と手前に4つずつ）。並び順は f.tp に入っている順
+export function toppingPans(type) { const w = FIXTURES[type]?.w || 1.6, out = []; for (let i = 0; i < 8; i++) out.push([-w / 2 + 0.12 + (i % 4) * ((w - 0.24) / 3), i < 4 ? -0.12 : 0.12]); return out; }
+export function panKinds(f) { return Object.keys(f?.tp || {}).filter((t) => TOPPINGS[t] && f.tp[t] > 0).slice(0, 8); }
+export function pickPan(type, lx, lz) { const P = toppingPans(type); let b = 0, bd = Infinity; P.forEach(([x, z], i) => { const d = (x - lx) ** 2 + (z - lz) ** 2; if (d < bd) { bd = d; b = i; } }); return b; }

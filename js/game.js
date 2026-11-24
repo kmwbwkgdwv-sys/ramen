@@ -5,7 +5,7 @@ import {
   FIXTURES, SOUPS, TOPPINGS, SIDES, GRIDDLE, HARD, DISHES, INGREDIENTS, GAMBLES, PLAYER_BOUNDS, PLAYER_SPAWN, BUILDING, HALL, STAFF_ROLES, SOUP_READY, SOUP_RICH, RICE_READY, NOODLE_OVER, DIRTY_MAX,
   getWalls, fixtureFootprint, snapFixture, worldToLocal, localToWorld, pickSeat, pickBasket, pickPass, basketPos, isCounter, noodleLabel, inHall, BROTHS, TARES, soupRecipe, DRY_MAX,
   carryInfo, ingFits, ingShort, ingUnlocked, CARRY_SPEED, POT_PER, slotPos, pickSlot, SLOT_OK,
-  fridgeLayout, fridgeCellPos, pickFridgeCell, fridgeItemName, fridgeGrid, CUT_N, PAN_MAX, staffEq, THROWABLE, packName,
+  fridgeLayout, fridgeCellPos, pickFridgeCell, fridgeItemName, fridgeGrid, CUT_N, PAN_MAX, staffEq, THROWABLE, packName, toppingPans, panKinds, pickPan,
 } from './data.js';
 import { clamp, yen, dist, angleLerp, lerp, escapeText } from './util.js';
 import { toast, h, modal, confirmBox } from './ui.js';
@@ -20,7 +20,6 @@ const THIEF_AV = { skin: '#f1b98c', hair: 'short', hairColor: '#2b1d16', eyes: '
 const DEALER_AV = { skin: '#d99b6c', hair: 'sidepart', hairColor: '#2b1d16', eyes: 'cool', mouth: 'flat', brow: 'thick', hat: 'hachimaki', hatColor: '#ffffff', acc: 'none', top: 'suit', topColor: '#1c1d20', bottom: 'pants', bottomColor: '#1c1d20', shoeColor: '#111111', height: 1 };
 const SOUP_NAME = (k) => SOUPS[k]?.name || '';
 // 料理の中身の説明
-const DRAIN_HINT = 2; // 湯切りの時間ぶん、少し早めに案内する
 export function dishText(d) {
   if (!d) return '';
   const D = DISHES[d.k]?.name || '器';
@@ -49,6 +48,7 @@ export function slotItemName(o) {
   if (o.t === 'top') return `${TOPPINGS[o.k]?.icon || ''}切った${TOPPINGS[o.k]?.name || ''}（1人前）`;
   if (o.t === 'keep') return `🫙スープ（${BROTHS[o.b]?.short || ''}）${o.sv}杯分`;
   if (o.t === 'pack') return `📦${INGREDIENTS[o.k]?.icon || ''}${packName(o.k)}`;
+  if (o.t === 'tebo') return `♨️てぼ（麺 ${o.men.toFixed(0)}秒・${noodleLabel(o.men)}）`;
   return '?';
 }
 export class Game {
@@ -345,6 +345,10 @@ export class Game {
     if (def.seats) { hit.si = pickSeat(f.t, lx, lz); if (hd?.t === 'dish') { const b = this._bestSeat(f, hd.d, hit.si); if (b != null) hit.si = b; } else if (!hd && !(f.dd?.[hit.si]?.length)) { const k = (f.dd || []).findIndex((a) => a?.length); if (k >= 0 && !this.orderAt(f.id, hit.si)) hit.si = k; } }
     if (def.baskets) { hit.bi = pickBasket(f.t, lx, lz); hit.bi = this._bestBasket(f, hd, hit.bi); }
     if (def.pass) hit.pi = pickPass(f.t, lx);
+    if (def.topping) {
+      const kinds = panKinds(f), pi = pickPan(f.t, lx, lz ?? 0), g = this._guideNow?.top;
+      hit.pk = !hit.assist && kinds[pi] ? kinds[pi] : g && kinds.includes(g) ? g : kinds[pi] || kinds[0] || null;
+    }
     if (def.cap) {
       const cells = fridgeLayout(this.store).get(f.id) || [];
       hit.ci = -1;
@@ -364,7 +368,10 @@ export class Game {
     if (def.slots) {
       hit.i = pickSlot(f.t, lx);
       // 置くときは空いている所、取るときは物がある所を近い順に
-      if (hd && f.sl?.[hit.i]) { const k = this._nearSlot(f, hit.i, (x) => !x); if (k >= 0) hit.i = k; }
+      const needM = (x) => x?.t === 'dish' && x.d.k === 'bowl' && x.d.broth && x.d.men == null;
+      const needT = (x) => x?.t === 'dish' && ((x.d.k === 'bowl' && x.d.broth) || (x.d.k === 'bowlS' && x.d.side === 'rice')) && !(x.d.tp || []).includes(hd.k);
+      if (hd?.t === 'tebo' || hd?.t === 'top') { const pr = hd.t === 'tebo' ? needM : needT; if (!pr(f.sl?.[hit.i])) { const k = this._nearSlot(f, hit.i, pr); if (k >= 0) hit.i = k; } }
+      else if (hd && f.sl?.[hit.i]) { const k = this._nearSlot(f, hit.i, (x) => !x); if (k >= 0) hit.i = k; }
       if (!hd && !f.sl?.[hit.i]) { const k = this._nearSlot(f, hit.i, Boolean); if (k >= 0) hit.i = k; }
     }
     return hit;
@@ -396,7 +403,7 @@ export class Game {
   }
   // 丼（スープ入り・麺なし）を持っているときは、注文の固さにいちばん近いてぼを選ぶ
   _bestBasket(f, hd, bi) {
-    if (!(hd?.t === 'dish' && hd.d.k === 'bowl' && hd.d.broth && hd.d.men == null) || f.bk[bi]) return bi;
+    if (hd || f.bk[bi]) return bi;
     const clk = this.clk(), want = this._focusLine()?.[2] || 'futsu', [lo, hi] = HARD[want]?.t || [21, 27];
     let best = -1, bs = Infinity;
     f.bk.forEach((x, i) => { if (!x) return; const s = clk - x.t0, sc = (s < lo ? lo - s + 3 : s > hi ? s - hi : -s * 0.01) + (x.by ? 60 : 0); if (sc < bs) { bs = sc; best = i; } }); // アルバイトが茹でている麺はなるべく取らない
@@ -446,9 +453,18 @@ export class Game {
     if (hd?.t === 'dirty') return G(hd.a.length >= DIRTY_MAX ? '🫧 洗い場のシンクに入れよう（遠くから投げ入れもできる）' : '🫧 食器を洗い場のシンクへ', this._fxOf((f, D) => D.sink));
     const late = st.phase === 'closing' || st.phase === 'summary';
     if (hd?.t === 'pack' && INGREDIENTS[hd.k]) return INGREDIENTS[hd.k].dish ? G(`🍽️ ${INGREDIENTS[hd.k].name}を食器棚にしまおう`, this._fxOf(RACK)) : G(`🧊 ${ingShort(hd.k)}を冷蔵庫に入れよう`, FR());
+    // 持っている段ボール：冷蔵庫（器は食器棚）まで運んで入れる
+    const hc = this.heldCrate();
+    if (hc?.kind === 'food') { const k = hc.items[0]?.[0], P = INGREDIENTS[k]; if (P?.dish) return G(`📦 ${P.name}の段ボールを食器棚まで運んで、しまおう`, this._fxOf(RACK)); return fridgeUsed(st, [[k, 1]]) > fridgeCap(st) ? G('⚠ 冷蔵庫がいっぱい！段ボールを下ろして、冷蔵庫の物を先に使おう', null) : G(`📦 ${ingShort(k)}の段ボールを冷蔵庫まで運んで、入れよう`, FR()); }
+    // てぼ：湯切り → 作業台の丼へ
+    if (hd?.t === 'tebo') {
+      const bf = this.fx(hd.fid), ws = this._fxOf((f, D) => D.slots && f.sl?.some((o) => o?.t === 'dish' && o.d.k === 'bowl' && o.d.broth && o.d.men == null));
+      if ((hd.dr || 0) < 1) return G('♨️ てぼを振って湯切りしよう（長押し）', bf);
+      return ws ? G('🍜 作業台の丼を狙って、麺を入れよう', ws) : G('🧰 スープを入れた丼が作業台にない！てぼを茹で麺機に戻して、丼を用意しよう', bf);
+    }
     // 勝手口の外に届いた段ボール（食材）
     const boxC = (st.crates || []).find((c) => c.kind === 'food' && c.loc.t === 'f' && c.items.length);
-    const boxStep = () => boxC && !hd ? G(boxC.op ? '📦 段ボールの食材を1パックずつ取って冷蔵庫へ（器は食器棚へ）' : '📦 勝手口の外に段ボールが届いた！開けて、食材を冷蔵庫に運ぼう', null, { pos: { x: boxC.loc.x, y: 1.1, z: boxC.loc.z }, crate: boxC.id }) : null;
+    const boxStep = () => boxC && !hd && !hc ? G(`📦 勝手口の外に段ボールが届いた！持って、${INGREDIENTS[boxC.items[0][0]]?.dish ? '食器棚' : '冷蔵庫'}まで運ぼう`, null, { pos: { x: boxC.loc.x, y: 1.1, z: boxC.loc.z }, crate: boxC.id }) : null;
     if (hd?.t === 'top' && TOPPINGS[hd.k]) {
       const T = TOPPINGS[hd.k];
       const ws = this._fxOf((f, D) => D.slots && f.sl?.some((o) => o?.t === 'dish' && (o.d.broth || o.d.side === 'rice') && !(o.d.tp || []).includes(hd.k) && this.targetRecipe(o.d)?.tp.includes(hd.k)));
@@ -552,19 +568,17 @@ export class Game {
         if (d.broth && d.broth !== SP.broth) return G(`⚠ だしがちがいます（${m.name}は${BROTHS[SP.broth].short}スープ）：生ゴミ箱へ`, this._fxOf((f) => f.t === 'trash'));
         if (!d.tare) { const g = tareStep(m.soup); return g || G(`🫙 トッピング台で丼に${TARES[SP.tare].short}を入れよう`, this._fxOf(TOP)); }
         if (!d.broth) { const pot = this._fxOf((f, D) => D.pot && f.pot?.b === SP.broth && f.pot.sv > 0); if (!pot) return brothStep(m.soup) || G('🍲 だしを炊こう', this._fxOf(POT)); const B = BROTHS[SP.broth], h = potHeat(pot.pot, clk); return potReady(pot, clk) ? G(`🥣 寸胴鍋で${B.name}を注ごう`, pot) : G(`⏳ だしが炊けるのを待とう（あと${Math.ceil(B.ready - h)}秒）${potAku(pot.pot, clk) > 0.2 ? '・その間にアク取り' : ''}`, pot); }
-        if (d.men == null) { const b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean)); if (b) { const s = Math.max(...b.bk.filter(Boolean).map((x) => clk - x.t0)); return G(s < H.t[0] - DRAIN_HINT ? `♨️ 麺が茹で上がるのを待とう（${H.name}まで あと${Math.ceil(H.t[0] - s)}秒）` : `♨️ 茹で麺機で湯切り！長押しで水を切ろう（${H.name}）`, b); } return G('🍜 麺を茹でていない！丼を作業台に置いて、冷蔵庫から麺を持ってこよう', this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o)) || this._fxOf((f, D) => D.pass)); }
+        const WS = this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o));
+        if (d.men == null) return G('🧰 丼を作業台に置こう（麺は、てぼを上げて湯切りしてから入れる）', WS || this._fxOf((f, D) => D.slots));
         const miss = m.tp.filter((x) => !(d.tp || []).includes(x));
         if (miss.length) {
-          const tb = this._fxOf((f, D) => D.topping && miss.some((x) => f.tp?.[x] > 0));
-          if (tb) return G(`🥢 トッピング台で ${miss.filter((x) => tb.tp?.[x] > 0).map((x) => TOPPINGS[x].name).join('・')} をのせよう`, tb);
-          const x = miss[0], T = TOPPINGS[x], WS = this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o));
-          if (topTotal(st, x) > 0) return G(`🧰 丼を作業台に置いて、${(st.prep[x] || 0) > 0 ? '冷蔵庫' : 'まな板'}の${T.name}を1人前持ってきてのせよう`, WS || this._fxOf(TOP));
-          return (st.stock[T.raw] || 0) > 0 ? G(`🔪 ${T.name}がない：丼を作業台に置いて、冷蔵庫の${ingShort(T.raw)}をまな板で切ろう`, WS || FR()) : G(`💻 ${INGREDIENTS[T.raw].name}がない！パソコンで仕入れよう`, PC());
+          if (miss.some((x) => topTotal(st, x) > 0 || (st.stock[TOPPINGS[x].raw] || 0) > 0)) return G('🧰 丼を作業台に置いて、トッピングを手に取ってのせよう', WS || this._fxOf((f, D) => D.slots));
+          const T = TOPPINGS[miss[0]]; return G(`💻 ${INGREDIENTS[T.raw].name}がない！パソコンで仕入れよう`, PC());
         }
         return serve(who, seat);
       }
       if (l[0] === 'beer') { if (d.k !== 'mug') return G('🍺 ジョッキが必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'beer' && !((st.prep.beer || 0) > 0)) return G('🛢️ 樽が空！ジョッキを作業台に置いて、冷蔵庫からビール樽を運んでつなごう', this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o)) || this._fxOf((f, D) => D.pass)); if (d.side !== 'beer' || (d.fill || 0) < 0.85) return G('🍺 ビールサーバーで注ごう（長押し・泡7:3で止める）', this._fxOf((f) => f.t === 'beer')); return serve(who, seat); }
-      if (l[0] === 'rice' || l[0] === 'chadon') { if (d.k !== 'bowlS') return G('🍚 小丼が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'rice') return G('🍚 炊飯器でごはんをよそおう', this._fxOf((f) => f.t === 'rice')); if (l[0] === 'chadon' && !(d.tp || []).includes('chashu')) return this._fxOf((f, D) => D.topping && f.tp?.chashu > 0) ? G('🥢 トッピング台でチャーシューをのせよう', this._fxOf((f, D) => D.topping && f.tp?.chashu > 0)) : G('🧰 小丼を作業台に置いて、切ったチャーシューを1人前持ってきてのせよう', this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o))); return serve(who, seat); }
+      if (l[0] === 'rice' || l[0] === 'chadon') { if (d.k !== 'bowlS') return G('🍚 小丼が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== 'rice') return G('🍚 炊飯器でごはんをよそおう', this._fxOf((f) => f.t === 'rice')); if (l[0] === 'chadon' && !(d.tp || []).includes('chashu')) return G('🧰 小丼を作業台に置いて、チャーシューを1人前手に取ってのせよう', this._fxOf((f, D) => D.slots && f.sl?.some((o) => !o)) || this._fxOf((f, D) => D.slots)); return serve(who, seat); }
       if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (d.k !== 'plate') return G('🍽️ 皿が必要です（食器棚）', this._fxOf(RACK)); if (d.side !== l[0]) return G(g?.gr ? `🍽️ ${S.name}を皿に取ろう` : `🔥 先に${S.name}を作ろう`, g); return serve(who, seat); }
       return null;
     }
@@ -575,14 +589,16 @@ export class Game {
       for (const f of st.fixtures) { if (f.st || f.br || !f.sl) continue; for (const x of f.sl) if (x?.t === 'dish' && x.d.k === 'bowl' && x.d.soup === m.soup) { wsF = f; wsD = x.d; break; } if (wsF) break; }
       if (wsD) {
         if (wsD.men == null) {
-          const b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean));
+          const H = HARD[l[2]] || HARD.futsu, b = this._fxOf((f, D) => D.baskets && f.bk.some(Boolean));
           if (!b) return (st.stock.men || 0) > 0 ? G('🧊 冷蔵庫から麺を取って、茹で麺機のてぼに入れよう（丼は作業台に置いたまま）', FR(), { ing: 'men' }) : G('💻 生麺がない！パソコンで仕入れよう', PC());
-          return G('🧰 作業台の丼を持って、茹で麺機で湯切りしよう', wsF);
+          const sec = Math.max(...b.bk.filter(Boolean).map((x) => clk - x.t0));
+          return sec < H.t[0] ? G(`♨️ 麺が茹で上がるのを待とう（${H.name}まで あと${Math.ceil(H.t[0] - sec)}秒）`, b) : G(`♨️ 茹で麺機のてぼを上げて、湯切りしよう（${H.name}：${H.t[0]}〜${H.t[1]}秒）`, b);
         }
         const miss = m.tp.filter((x) => !(wsD.tp || []).includes(x));
         if (miss.length) {
-          const x = miss[0], T = TOPPINGS[x], cb = this._fxOf((f, D) => D.board && f.cut?.tid === x), tb = this._fxOf((f, D) => D.topping && f.tp?.[x] > 0);
-          if (tb) return G(`🧰 作業台の丼を持って、トッピング台で${T.name}をのせよう`, wsF);
+          const tb = this._fxOf((f, D) => D.topping && miss.some((x) => f.tp?.[x] > 0));
+          if (tb) { const x = miss.find((y) => tb.tp?.[y] > 0); return G(`🥢 トッピング台で${TOPPINGS[x].name}を手に取って、作業台の丼にのせよう`, tb, { top: x }); }
+          const x = miss[0], T = TOPPINGS[x], cb = this._fxOf((f, D) => D.board && f.cut?.tid === x);
           if (cb) return G(`🔪 まな板の切った${T.name}を1人前持って、作業台の丼にのせよう`, cb);
           if ((st.prep[x] || 0) > 0) return G(`🧊 冷蔵庫から切った${T.name}を1人前取って、作業台の丼にのせよう`, FR(), { top: x });
           if ((st.stock[T.raw] || 0) > 0) return G(`🔪 冷蔵庫の${ingShort(T.raw)}をまな板で切って、作業台の丼にのせよう`, FR(), { ing: T.raw });
@@ -596,6 +612,15 @@ export class Game {
       return G('🍜 食器棚でラーメン丼を取ろう', this._fxOf(RACK));
     }
     if (S && (l[0] === 'gyoza' || l[0] === 'karaage')) { const g = gr(l[0]); if (g && !g.gr) { const it = GRIDDLE[l[0]].item; return G(`🧊 冷蔵庫から${ingShort(it)}を取って、${FIXTURES[g.t].name}で${S.name}を作ろう`, FR(), { ing: it }); } return G('🍽️ 食器棚で皿を取ろう', this._fxOf(RACK)); }
+    if (l[0] === 'chadon') {
+      const wf = st.fixtures.find((f) => !f.st && !f.br && f.sl?.some((x) => x?.t === 'dish' && x.d.k === 'bowlS' && x.d.side === 'rice'));
+      if (wf) {
+        const wd = wf.sl.find((x) => x?.t === 'dish' && x.d.k === 'bowlS' && x.d.side === 'rice').d;
+        if ((wd.tp || []).includes('chashu')) return G('🧰 作業台のチャーシュー丼を持って、お客さんに出そう', wf);
+        const tb = this._fxOf((f, D) => D.topping && f.tp?.chashu > 0); if (tb) return G('🥢 トッピング台でチャーシューを手に取って、作業台の小丼にのせよう', tb, { top: 'chashu' });
+        if ((st.prep.chashu || 0) > 0) return G('🧊 冷蔵庫から切ったチャーシューを1人前取って、作業台の小丼にのせよう', FR(), { top: 'chashu' });
+      }
+    }
     if (l[0] === 'rice' || l[0] === 'chadon') { const rc = this._fxOf((f) => f.t === 'rice'); if (rc && !rc.rc) return G('🧊 冷蔵庫から米を取って、洗い場で研いでから炊飯器で炊こう', FR(), { ing: 'kome' }); return G('🍚 食器棚で小丼を取ろう', this._fxOf(RACK)); }
     if (l[0] === 'beer') return (st.prep.beer || 0) > 0 ? G('🍺 食器棚でジョッキを取ろう', this._fxOf(RACK)) : G('🧊 冷蔵庫からビール樽を運んで、ビールサーバーにつなごう', FR(), { ing: 'taru' });
     return null;
@@ -615,7 +640,7 @@ export class Game {
     const near = g?.f && dist(g.f.x, g.f.z, this.pc.x, this.pc.z) < 1.6;
     this.ui.setGuide(g ? g.text : '', edge, !!g?.urgent, near);
   }
-  cookTarget(f) { const d = FIXTURES[f.t]; return d.pot || d.baskets || d.topping || d.rice || d.griddle || d.beer || d.pass || d.rack || d.sink || f.t === 'trash'; }
+  cookTarget(f) { const d = FIXTURES[f.t]; return d.pot || d.baskets || d.topping || d.slots || d.rice || d.griddle || d.beer || d.pass || d.rack || d.sink || f.t === 'trash'; }
   // 料理ができあがっている（あとは出すだけ）
   _dishDone(d) {
     if (!d) return false;
@@ -640,6 +665,8 @@ export class Game {
   holdDur(k) { const now = performance.now() / 1000, last = this.hold[k] || 0; this.hold[k] = now; return now - last > 0.5 ? 0.13 : Math.min(0.35, now - last); }
   // ---------- 行動 ----------
   _actions(t) {
+    const fc = this.heldCrate();
+    if (fc?.kind === 'food') return this._foodCrateActions(t, fc);
     const A0 = this._actions0(t), f0 = t?.type === 'fixture' ? t.f : null;
     if (f0?.st && A0.info) A0.info = '🧑‍🍳<b>バイト用</b>　' + A0.info;
     // 手に持っている食材などは投げられる（向いている方へ。設備の上に落ちたらそこに入る・仲間が受け取れる）
@@ -662,22 +689,19 @@ export class Game {
     if (t?.type === 'crate') {
       const c = (st.crates || []).find((o) => o.id === t.cid);
       if (c?.kind === 'food') {
-        const list = c.items.map(([k, n]) => `${INGREDIENTS[k]?.icon || ''}${ingShort(k)}×${n}`).join(' ');
-        A.info = `📦 <b>届いた段ボール</b>${c.op ? '（開いている）' : ''}：${list}`;
-        const want = this._guideNow?.ing && c.items.find(([k]) => k === this._guideNow.ing), it = want || c.items[0];
-        if (!c.op) { A.act = { label: '📦 開ける', fn: () => this.act({ t: 'crateOpen', cid: c.id }) }; A.alt = { label: '段ボールごと持つ', fn: () => this.act({ t: 'cratePick', cid: c.id }) }; A.hint = '開けて、中の食材を1パックずつ冷蔵庫へ（器は食器棚へ）。段ボールごと冷蔵庫の近くへ運んでもいい'; return A; }
-        if (it) A.act = { label: `${INGREDIENTS[it[0]]?.icon || ''}${ingShort(it[0])}を1パック取る`, fn: () => this.act({ t: 'crateTake', cid: c.id, k: it[0] }) };
-        A.alt = { label: '段ボールごと持つ', fn: () => this.act({ t: 'cratePick', cid: c.id }) };
-        if (c.items.length > 1) A.box = { label: '選んで取る', icon: '📦', fn: () => this.ui.openCratePicker(c.id) };
-        A.hint = '食材は冷蔵庫へ、器は食器棚へ。冷蔵庫に入れないまま次の日になると傷んで捨てることになる';
+        const [k, n] = c.items[0] || [], P = INGREDIENTS[k];
+        A.info = `📦 <b>段ボール</b>：${P?.icon || ''}${P?.name || ''} ×${n}パック`;
+        A.act = { label: '📦 持つ', fn: () => this.act({ t: 'cratePick', cid: c.id }) };
+        A.alt = { label: `${P?.icon || ''}1パック取り出す`, fn: () => this.act({ t: 'crateTake', cid: c.id, k }) };
+        A.hint = P?.dish ? '持って食器棚まで運んで「食器棚にしまう」' : '持って冷蔵庫まで運んで「冷蔵庫に入れる」。入れないまま次の日になると傷んで捨てることになる';
         return A;
       }
       if (c) {
         const def = FIXTURES[c.ft];
-        A.info = `📦 <b>${def.icon} ${def.name}</b>の大きい段ボール`;
+        A.info = `📦 <b>${def.icon} ${c.st ? '【バイト用】' : ''}${def.name}</b>の大きい段ボール`;
         A.act = { label: '持つ', fn: () => { this.crateR = 0; this.act({ t: 'cratePick', cid: c.id }); } };
         A.alt = { label: `返品 +${yen(def.price)}`, fn: async () => { this.setUIBlock(true); const ok = await confirmBox(`${def.icon} ${def.name}を返品しますか？（${yen(def.price)}もどります）`, '返品する'); this.setUIBlock(false); if (ok) this.act({ t: 'crateReturn', cid: c.id }); } };
-        A.hint = '持って、置きたい場所で「ここに置く」';
+        A.hint = '持って、置きたい場所で「開けて置く」';
         return A;
       }
     }
@@ -696,6 +720,7 @@ export class Game {
       A.hint = this.dyn?.th && this.dyn.th[5] !== 'down' ? '🥷 泥棒を画面のまん中に入れて投げよう！（2回当てると撃退）' : 'お客さんに当てないように注意';
       return A;
     }
+    if (hd?.t === 'tebo') return this._teboActions(t, hd, A);
     if (t?.type === 'fixture' && FIXTURES[t.f.t]?.slots && !t.f.br) return this._slotActions(t, t.f, hd, A);
     if (t?.type === 'fixture' && FIXTURES[t.f.t]?.cap && !t.f.br) return this._fridgeActions(t, t.f, hd, A);
     if (hd?.t === 'pot' || hd?.t === 'ing' || hd?.t === 'top' || hd?.t === 'keep' || hd?.t === 'pack') return this._carryActions(t, hd, A);
@@ -755,25 +780,20 @@ export class Game {
       }
       return A;
     }
-    // ---- 茹で麺機 ----
+    // ---- 茹で麺機：麺をてぼに入れる → 茹で上がったら、てぼを上げて湯切り → 作業台の丼へ ----
     if (def.baskets) {
       const bi = t.bi ?? 0, b = f.bk[bi];
-      const lines = f.bk.map((x, i) => { if (!x) return `<span class="bk off">${i + 1}:空</span>`; const s = clk - x.t0; const lab = noodleLabel(s); return `<span class="bk ${s > NOODLE_OVER ? 'over' : s >= HARD.katame.t[0] ? 'ok' : ''}${i === bi ? ' sel' : ''}">${i + 1}:${s.toFixed(0)}秒 ${lab}</span>`; }).join(' ');
+      const lines = f.bk.map((x, i) => { if (f.bo?.[i]) return `<span class="bk off${i === bi ? ' sel' : ''}">${i + 1}:${f.bo[i] === this.me ? '手に持っている' : '持ち出し中'}</span>`; if (!x) return `<span class="bk off">${i + 1}:空</span>`; const s = clk - x.t0; const lab = noodleLabel(s); return `<span class="bk ${s > NOODLE_OVER ? 'over' : s >= HARD.katame.t[0] ? 'ok' : ''}${i === bi ? ' sel' : ''}">${i + 1}:${s.toFixed(0)}秒 ${lab}</span>`; }).join(' ');
       A.info = dishInfo + `♨️ <b>茹で麺機</b>　${lines}<br><small>かため${HARD.katame.t[0]}〜${HARD.katame.t[1]}秒・ふつう〜${HARD.futsu.t[1]}秒・やわらかめ〜${HARD.yawa.t[1]}秒</small>`;
       const [bx, bz] = basketPos(f.t, bi); A.slot = [f.id, { x: bx, y: 0.86, z: bz, w: 0.2, h: 0.12, d: 0.2 }];
-      if (hd?.t === 'dish' && hd.d.k === 'bowl') {
-        if (!hd.d.broth) A.hint = '先にタレとスープを丼に入れよう';
-        else if (hd.d.men == null) {
-          if (b) {
-            A.act = { label: '♨️ 湯切り（長押し）', repeat: true, fn: () => { this.act({ t: 'drain', fid: f.id, bi, dur: this.holdDur('drain') }); this.anim = 'yugiri'; this.animT = 0.35; } };
-            A.alt = { label: '湯切りせずに入れる', fn: () => this.act({ t: 'noodleOut', fid: f.id, bi }) };
-            A.gauge = [clamp(b.dr || 0, 0, 1), '💧', `湯切り ${Math.round((b.dr || 0) * 100)}%（${(clk - b.t0).toFixed(0)}秒・${noodleLabel(clk - b.t0)}）`];
-            A.hint = 'てぼを上げて、長押しでしっかり水を切ろう（切りきると丼に入る）';
-          } else A.hint = 'そのてぼは空です（麺が入ったてぼを狙おう）';
-        }
+      if (hd?.t === 'dish' && hd.d.k === 'bowl') { A.hint = hd.d.broth ? '丼は作業台に置こう。手を空けて、てぼを上げて湯切りしてから、作業台の丼に麺を入れる' : '先にタレとスープを丼に入れて、作業台に置こう'; return A; }
+      if (!hd && b) {
+        const sec = clk - b.t0, want = this._focusLine()?.[2], H = HARD[want];
+        A.act = { label: `♨️ てぼを上げる（${sec.toFixed(0)}秒・${noodleLabel(sec)}）`, fn: () => this.act({ t: 'teboLift', fid: f.id, bi }) };
+        A.alt = { label: `${bi + 1}番の麺を捨てる`, fn: () => this.act({ t: 'noodleDump', fid: f.id, bi }) };
+        A.hint = (H ? `注文は${H.name}（${H.t[0]}〜${H.t[1]}秒）。` : '') + 'てぼを上げて、長押しで湯切り → 作業台の丼を狙って麺を入れる';
       }
-      if (b && !hd) A.alt = { label: `${bi + 1}番の麺を捨てる`, fn: () => this.act({ t: 'noodleDump', fid: f.id, bi }) };
-      if (!A.hint) A.hint = `生麺は冷蔵庫に${st.stock.men || 0}玉。冷蔵庫から麺を持ってきててぼに入れ、丼にスープを注いでから湯切り`;
+      if (!A.hint) A.hint = `生麺は冷蔵庫に${st.stock.men || 0}玉。冷蔵庫から麺を持ってきててぼに入れ、茹で上がったらてぼを上げて湯切り → 作業台の丼へ`;
       return A;
     }
     // ---- トッピング台 ----
@@ -790,15 +810,17 @@ export class Game {
         A.hint = want ? `「${want.name}」は ${soupRecipe(want.soup)}。丼にタレ（かえし）を先に入れよう` : '丼にタレ（かえし）を先に入れて、寸胴鍋でだしを注ごう';
         return A;
       }
-      const ok = hd?.t === 'dish' && ((hd.d.k === 'bowl' && hd.d.broth) || (hd.d.k === 'bowlS' && hd.d.side === 'rice'));
-      if (ok) {
-        A.act = { label: 'トッピング', icon: '🥢', fn: () => this.ui.openToppingPicker(f.id) };
-        const target = this.targetRecipe(hd.d);
-        const can = (target?.miss || []).filter((x) => f.tp?.[x] > 0);
-        if (can.length) A.alt = { label: `注文どおり（${target.name}）`, fn: () => { for (const tid of can) this.act({ t: 'top', fid: f.id, tid }); } };
-        A.hint = target ? `「${target.name}」には ${target.tp.map((x) => TOPPINGS[x]?.icon + TOPPINGS[x]?.name).join('・')}` : '';
-      } else A.hint = hd ? (hd.t === 'dish' && hd.d.k === 'bowl' ? '寸胴鍋でだしを注いでからトッピングしよう' : 'スープを入れた丼（またはライス）を持ってこよう') : 'タレ（かえし）は冷蔵庫から醤油などを運んできて、ここで混ぜて作る。トッピングはまな板で切って、1人前ずつバットに並べる';
-      if (!hd && Object.keys(f.tp || {}).length) A.alt = { label: 'バットから1人前取る', fn: () => this.ui.openPanPicker(f.id) };
+      if (hd?.t === 'dish' && ((hd.d.k === 'bowl' && hd.d.broth) || (hd.d.k === 'bowlS' && hd.d.side === 'rice'))) { A.hint = '丼は作業台に置こう。トッピングは手に取って、作業台の丼にのせに行く'; return A; }
+      const kinds = panKinds(f);
+      if (!hd && kinds.length) {
+        const k = kinds.includes(t.pk) ? t.pk : kinds[0], T = TOPPINGS[k], [px, pz] = toppingPans(f.t)[kinds.indexOf(k)];
+        A.slot = [f.id, { x: px, y: 0.93, z: pz, w: 0.17, h: 0.08, d: 0.17 }];
+        A.act = { label: `${T.icon}${T.name}を手に取る（残り${f.tp[k]}）`, fn: () => this.act({ t: 'panTake', fid: f.id, k }) };
+        if (kinds.length > 1) A.alt = { label: 'ほかのトッピングを取る', fn: () => this.ui.openPanPicker(f.id) };
+        A.hint = '1人前ずつ手に取って、作業台の丼を狙ってのせる（狙うバットを変えると、ほかのトッピング）';
+        return A;
+      }
+      A.hint = hd ? 'スープを入れた丼は作業台に置こう。トッピングは手に取ってのせる' : 'タレ（かえし）は冷蔵庫から醤油などを運んできて、ここで混ぜて作る。トッピングはまな板で切って、1人前ずつバットに並べる';
       return A;
     }
     // ---- まな板 ----
@@ -905,7 +927,7 @@ export class Game {
       A.hint = st.till > 3000 ? '⚠ お金がたまると泥棒に狙われます。金庫にしまおう' : 'お金をつかんで賭場へ行くと、丁半博打などで賭けられます';
       return A;
     }
-    if (f.t === 'pc') { A.act = { label: 'パソコンを使う', icon: '💻', fn: () => this.ui.openPC('order') }; A.info = '💻 パソコン：仕入れ・メニュー・アルバイト・評判・お店・拡張'; return A; }
+    if (f.t === 'pc') { A.act = { label: 'パソコンを使う', icon: '💻', fn: () => this.ui.openPC('order') }; A.info = '💻 パソコン：仕入れ・設備（冷蔵庫・茹で麺機など）・メニュー・アルバイト・評判・お店・拡張'; return A; }
     if (f.t === 'opensign') return Object.assign(A, this._signAction(st));
     if (def.gamble) {
       const G = GAMBLES[def.gamble], ok = st.level >= G.lv;
@@ -917,6 +939,55 @@ export class Game {
     if (def.text) { A.act = { label: '文字を編集', fn: () => this.ui.openText(f.id) }; A.info = `${def.icon} ${def.name}`; return A; }
     if (def.turret) { A.info = '🛡️ <b>警備タレット</b>：近づいた泥棒に自動で手裏剣を撃つ'; return A; }
     A.info = `${def.icon} ${def.name}`;
+    return A;
+  }
+  // てぼを持っているとき：長押しで湯切り → 作業台の丼を狙って麺を入れる
+  _teboActions(t, hd, A) {
+    const f = t?.type === 'fixture' ? t.f : null, def = f && FIXTURES[f.t], dr = hd.dr || 0, drained = dr >= 1;
+    A.info = `♨️ <b>てぼ</b>：麺 ${hd.men.toFixed(0)}秒（${noodleLabel(hd.men)}）・湯切り ${Math.round(dr * 100)}%`;
+    A.gauge = [clamp(dr, 0, 1), '💧', drained ? 'お湯が切れた！' : `湯切り ${Math.round(dr * 100)}%`];
+    const drain = { label: '♨️ 湯切り（長押し）', repeat: true, fn: () => { this.act({ t: 'teboDrain', dur: this.holdDur('drain') }); this.anim = 'yugiri'; this.animT = 0.35; } };
+    if (f && def.slots && !f.br) {
+      const ok = (o) => o?.t === 'dish' && o.d.k === 'bowl' && o.d.broth && o.d.men == null;
+      const i = ok(f.sl?.[t.i]) ? t.i : (f.sl || []).findIndex(ok);
+      A.box = { label: '動かす', icon: '🔧', fn: () => this.startMove(f) };
+      if (i >= 0) {
+        const [sx] = slotPos(f.t, i); A.slot = [f.id, { x: sx, y: 0.92, z: 0, w: def.w / def.slots - 0.04, h: 0.16, d: def.d - 0.1 }];
+        A.info += '<br>' + dishText(f.sl[i].d);
+        A.act = { label: drained ? '🍜 丼に麺を入れる' : '🍜 丼に麺を入れる（湯切りが足りない）', fn: () => this.act({ t: 'teboPour', fid: f.id, i }) };
+        if (!drained) { A.alt = drain; A.hint = 'しっかり湯切りしてから入れないと、水っぽくなっておいしくない'; }
+        else A.hint = '';
+        return A;
+      }
+      A.hint = (f.sl || []).some((o) => o?.t === 'dish' && o.d.k === 'bowl' && o.d.men == null) ? 'この丼にはまだタレとスープが入っていません' : '作業台にスープを入れた丼がありません';
+    }
+    if (f && def.baskets && f.id === hd.fid) {
+      A.act = drained ? { label: 'てぼを戻す', fn: () => this.act({ t: 'teboBack', fid: f.id }) } : drain;
+      if (!drained) A.alt = { label: 'てぼを戻す', fn: () => this.act({ t: 'teboBack', fid: f.id }) };
+      A.box = { label: '麺を捨てる', icon: '🗑️', fn: () => this.act({ t: 'teboDump' }) };
+      A.hint ||= drained ? '作業台の丼を狙って麺を入れよう（戻すとまた茹でる）' : '長押しでてぼを振ってお湯を切る → 作業台の丼を狙って麺を入れる';
+      return A;
+    }
+    if (f?.t === 'trash') { A.act = { label: '麺を捨てる', fn: () => this.act({ t: 'teboDump' }) }; return A; }
+    if (!drained) A.act = drain;
+    A.hint ||= drained ? '作業台の丼を狙って「丼に麺を入れる」' : '長押しで湯切り → 作業台の丼を狙って麺を入れる';
+    return A;
+  }
+  // 段ボールを持っているとき：冷蔵庫（器は食器棚）を狙って、中身をまとめて入れる
+  _foodCrateActions(t, c) {
+    const st = this.store, [k, n] = c.items[0] || [], P = INGREDIENTS[k];
+    const A = { act: null, alt: null, box: null, hint: '', info: `📦 <b>段ボール</b>：${P?.icon || ''}${P?.name || ''} ×${n}パック`, slot: null };
+    const drop = { label: '下ろす', icon: '📦', fn: () => this.act({ t: 'crateDrop', ...this.dropPoint() }) };
+    A.box = drop;
+    const f = t?.type === 'fixture' ? t.f : null, D = f && FIXTURES[f.t];
+    if (f && !f.br && P && (P.dish ? D.rack : D.cap)) {
+      A.act = { label: P.dish ? '📦 食器棚にしまう' : '📦 冷蔵庫に入れる', fn: () => this.act({ t: 'crateStore', fid: f.id }) };
+      A.info += P.dish ? '' : `<br>🧊 冷蔵庫 ${fridgeUsed(st)}/${fridgeCap(st)}パック`;
+      A.hint = !P.dish && fridgeUsed(st, [[k, 1]]) > fridgeCap(st) ? '⚠ 冷蔵庫がいっぱいです（使ってから入れよう）' : '';
+      return A;
+    }
+    A.act = drop;
+    A.hint = P?.dish ? '食器棚まで運んで「食器棚にしまう」' : '冷蔵庫まで運んで「冷蔵庫に入れる」（入れないまま次の日になると傷む）';
     return A;
   }
   // 作業台：何でも置ける・取れる
@@ -1122,7 +1193,6 @@ export class Game {
     return fitPlacement(this.store, type, x, z, r, ignoreId, overMe);
   }
   _crateActions(c, inp) {
-    if (c.kind === 'food') return { info: `📦 <b>届いた段ボール</b>：${c.items.map(([k, n]) => `${INGREDIENTS[k]?.icon || ''}${ingShort(k)}×${n}`).join(' ')}`, hint: '冷蔵庫の近くに下ろして、開けて中身をしまおう', act: { label: '下ろす', fn: () => this.act({ t: 'crateDrop', ...this.dropPoint() }) }, alt: null, box: null, slot: null };
     const def = FIXTURES[c.ft];
     if (inp.edges.has('rotate')) this.crateR = ((this.crateR || 0) + 1) % 4;
     const r = this.crateR || 0, P = this._placeAim(c.ft, r, null);
@@ -1137,7 +1207,7 @@ export class Game {
     };
   }
   _interact(dt, inp) {
-    const crate = this.heldCrate();
+    const crate0 = this.heldCrate(), crate = crate0?.kind === 'food' ? null : crate0;
     const t = crate ? null : this._target();
     if (!crate && this._crateGhost) { this._crateGhost = false; this.R.setGhost(null); }
     const A = crate ? this._crateActions(crate, inp) : this._actions(t);
@@ -1148,7 +1218,7 @@ export class Game {
     this.input.setLabel('box', A.box?.label || '', !!A.box, A.box?.icon || '📦'); this.input.setVisible('box', !!A.box);
     this.ui.setHint(A.hint, A.info);
     this._updateGuide(dt);
-    this.ui.setHand(this.hand());
+    this.ui.setHand(this.hand() || (crate0?.kind === 'food' ? { t: 'box', k: crate0.items[0]?.[0], n: crate0.items[0]?.[1] || 0 } : null));
     if (!crate && inp.taps?.length && this.app.settings.assist !== false) this._tapAct(inp.taps[inp.taps.length - 1]);
     const k = this.input.touchVisible ? '' : `${A.act ? 'E/左クリック：' + A.act.label + '　' : ''}${A.alt ? 'Q/右クリック：' + A.alt.label + '　' : ''}${A.box ? 'F：' + A.box.label + '　' : ''}B：建築　C：注文票　V：視点　Tab：評判　Esc：メニュー${this.room ? '　Enter：チャット' : ''}`;
     this.ui.setKeys(k);
@@ -1293,8 +1363,8 @@ export class Game {
     for (const e of list) if (e.hand && e.hand.t !== 'ext' && e.hand.t !== 'shuri') { if (e.hand.t === 'pot') { e.hz = 0.4; continue; } const free = this._ahead(e.x, e.z, e.ry || 0, (e.y || 0) + 0.9, 0.56); e.hz = clamp(free - 0.18, 0.14, 0.34); }
     for (const k of Object.keys(this.chat)) { this.chat[k].t -= dt; if (this.chat[k].t <= 0) delete this.chat[k]; }
     R.syncChars(list, dt);
-    const holders = (who) => R.getChar(who === this.me ? 'me' : 'p:' + who);
-    const fpH = fp ? { who: this.me, av: this.app.profile.av, bob: this.fpBob || 0, hand: hands[this.me] || null } : null;
+    const holders = (who) => { if (who === this.me) return R.getChar('me'); if (String(who).startsWith('s:')) { const sd = staffById[String(who).slice(2)]; return sd ? R.getChar(who + ':' + sd.seed) : null; } return R.getChar('p:' + who); };
+    const fpH = fp ? { who: this.me, av: this.app.profile.av, bob: this.fpBob || 0, hand: hands[this.me] || null, shake: this.anim === 'yugiri' } : null;
     R.syncHands(list, fpH);
     R.syncCrates(st, holders, fpH);
     const clk = this.clk();
@@ -1307,18 +1377,18 @@ export class Game {
   help(first) {
     const m = document.createElement('div');
     const steps = [
-      ['💻', '最初は何も仕入れていません。まずは厨房のパソコンで食材を仕入れよう。ドローンが勝手口の外に段ボールで置いていくので、勝手口から外に出て段ボールを開け、中のパックを1つずつ冷蔵庫へ（器は食器棚へ）。冷蔵庫に入れないまま次の日になると、外の食材は傷んで捨てることになる。買った設備も勝手口の外に段ボールで届くので、持って置きたい場所で「開けて置く」'],
+      ['💻', '最初は何も仕入れていません。まずは厨房のパソコンで食材を仕入れよう。ドローンが勝手口の外に、1つの商品につき1つの段ボールで置いていくので、勝手口から外に出て段ボールを持ち、冷蔵庫まで運んで「冷蔵庫に入れる」（器の段ボールは食器棚へ）。冷蔵庫に入れないまま次の日になると、外の食材は傷んで捨てることになる。冷蔵庫・茹で麺機・洗い場・寸胴鍋・席などの設備は、パソコンの「🛠️ 設備」か🔨建築モードで買える。買った設備も勝手口の外に大きい段ボールで届くので、持って置きたい場所で「開けて置く」'],
       ['🫳', '手に持っている食材・パック・切ったトッピング・スープの容器は「投げる」ことができる。狙った設備の上に落ちると、そこに入る（冷蔵庫・寸胴鍋・作業台・トッピング台・ゴミ箱など）。手が空いている仲間に向かって投げると受け取ってくれる。何もない所に落ちた物は拾える'],
       ['🏮', '外の札を「営業中」にすると、のれんが出てお客さんが来ます。お客さんは入口の券売機で食券を買って、空いている席に座ります'],
       ['📋', '注文は画面の左の「注文票」に出ます（Cキー／📋ボタンで開け閉め）。タップすると、その注文を選べます'],
       ['👉', '画面の上の「次」に、いまやることが出ます。黄色い矢印の設備へ行こう（画面の外なら、はしの矢印が向きを教えてくれます）。注文票をタップすると、その注文の手順に切りかわります'],
       ['🎯', '設備をまん中で狙わなくても、目の前の近くの設備が自動で選ばれます（狙いアシスト）。スマホは画面の設備を直接タップしても使えます。設定でオフにできます'],
       ['🧊', '食材はぜんぶ手で運びます（冷蔵庫に入れるのも自分で）。大型冷蔵庫の扉を開けると、棚に中身が並びます。ほしい物を狙って取ろう（同じ食材なら何個か重ねて持てる）。使う設備まで持っていこう。生麺は茹で麺機、鶏ガラ・豚骨・香味野菜は寸胴鍋、醤油などはトッピング台、長ねぎ・豚バラ肉などはまな板、米は洗い場で研いでから炊飯器、冷凍餃子は餃子焼き器、ビール樽はビールサーバーへ'],
-      ['🍜', 'ラーメンの作り方：①冷蔵庫から生麺を持ってきて、茹で麺機のてぼに入れる（入れた瞬間から茹で時間が始まる）→ ②食器棚で「丼を取る」→ ③トッピング台で「タレ（かえし）を入れる」→ ④寸胴鍋で「だしを注ぐ」→ ⑤茹で麺機で「湯切り」（長押しで水を切る）→ ⑥トッピングをのせる → ⑦お客さんに出す（カウンター越しでもOK）。丼は作業台に置いておけば、手を空けて麺やトッピングを取りに行ける'],
-      ['⏱️', '麺は茹でた秒数でかたさが決まる（かため15〜21秒・ふつう21〜27秒・やわらかめ27〜33秒）。湯切りの長押しにも1秒ほどかかるので少し早めに。湯切りが足りないと水っぽくなって点数が下がる'],
+      ['🍜', 'ラーメンの作り方：①冷蔵庫から生麺を持ってきて、茹で麺機のてぼに入れる（入れた瞬間から茹で時間が始まる）→ ②食器棚で「丼を取る」→ ③トッピング台で「タレ（かえし）を入れる」→ ④寸胴鍋で「だしを注ぐ」→ ⑤丼を作業台に置く → ⑥手を空けて茹で麺機で「てぼを上げる」→ 長押しで湯切り → 作業台の丼を狙って「丼に麺を入れる」→ ⑦トッピング台でトッピングを1人前ずつ手に取って、作業台の丼にのせる → ⑧丼を取ってお客さんに出す（カウンター越しでもOK）'],
+      ['⏱️', '麺は、てぼをお湯から上げるまでの秒数でかたさが決まる（かため15〜21秒・ふつう21〜27秒・やわらかめ27〜33秒）。上げたあとはそれ以上茹だらないので、湯切りはあわてなくていい。湯切りが足りないと水っぽくなって点数が下がる。「てぼを戻す」とまた茹でられる'],
       ['🍲', 'だしは寸胴鍋で一から炊く：①空の鍋を「持つ」→ ②洗い場の水道で長押しして水を張る（使い終わった鍋は先にだしがらを捨てて洗う）→ ③重くなった鍋を持ってコンロに戻す（水が入った鍋は重くて走れない）→ ④冷蔵庫から鶏ガラ・豚骨・煮干しを運んで入れる（1つで10杯分。香味野菜・昆布も入れるとおいしい）→ ⑤火をつける → ⑥出てきたアクを長押しで取る。鶏ガラ30秒・豚骨50秒・煮干し25秒で使える。空になったら火を止めて炊き直し（空焚きは火事のもと・火がついたままの鍋は持てない）'],
       ['🫙', 'タレ（かえし）は、冷蔵庫から醤油の一升瓶などを持ってきて、トッピング台のボウルにあけ、長押しで混ぜて作る。スープの味は「だし＋タレ」の組み合わせで決まる（例：醤油＝鶏ガラ＋醤油ダレ、家系＝豚骨＋醤油ダレ）'],
-      ['🔪', 'トッピングは、冷蔵庫から食材（長ねぎ・豚バラ肉・メンマなど）を持ってきてまな板にのせ、手を空けて長押しで切る。1つ切ると5人前がまな板に並ぶので、1人前ずつ持って、トッピング台のバット（1種類5人前まで）・冷蔵庫・作業台の丼へ運ぼう。丼を持ってトッピング台に行くと、バットの物をのせられる'],
+      ['🔪', 'トッピングは、冷蔵庫から食材（長ねぎ・豚バラ肉・メンマなど）を持ってきてまな板にのせ、手を空けて長押しで切る。1つ切ると5人前がまな板に並ぶので、1人前ずつ持って、トッピング台のバット（1種類5人前まで）・冷蔵庫・作業台の丼へ運ぼう。丼は作業台に置いたまま、トッピング台のバットを狙って1人前ずつ手に取り、作業台の丼を狙ってのせる'],
       ['🌙', '閉店したら片付け：寸胴鍋の火を止めて「保存容器に移す」→ 冷蔵庫へ。切ったトッピングも冷蔵庫へ（トッピング台のバットは3℃の冷蔵台なのでそのまま）。冷蔵庫に入れていないスープ・切ったトッピング・作りかけの料理は、次の日になると捨てられます。次の日は冷蔵庫の容器を空の鍋にあけて、火にかけて温め直せば使える（タレはそのまま持ち越し）'],
       ['🍽️', 'お客さんが帰ったら席の食器を下げて（5個まで重ねて持てる）、洗い場のシンクに入れる（遠くから投げ入れもできるけど、割れたりお客さんに当たったりする）。スポンジで1つずつ洗う（長押し）→ 水切りかごに並ぶ → 持って食器棚にしまう'],
       ['🥟', 'レベルが上がると、ライス・餃子・生ビール・チャーシュー丼・唐揚げなどのサイドメニュー、新しいスープとトッピングが使えるようになります。パソコンの「メニュー」でオリジナルラーメンを作ろう'],
@@ -1326,7 +1396,7 @@ export class Game {
       ['🔥', '焦がした餃子・唐揚げや空焚きの鍋から火が出ることがある。消火器を持って火に向けて長押し！放っておくと設備が壊れて、お客さんも逃げてしまう'],
       ['🕶️', 'ときどきサングラスのラーメン評論家が来る。80点以上の一杯を出すと評判が大きく上がって賞金も！'],
       ['🎲', 'となりの「賭場」で丁半博打（Lv.8 チンチロリン・Lv.12 スロット）。賭けるには、お店のレジを開けてお金をつかみ、賭場の台で「お金をセット」する。丁半は壺が開くまでドキドキ、チンチロは自分で振る、スロットは自分でSTOP（リーチ・ジャックポットあり）。勝ったお金は手持ちになるので、レジに戻そう'],
-      ['🧑‍🍳', 'Lv.3 からアルバイトを雇える（パソコン）。調理・接客・洗い場・おまかせ の仕事をまかせられる。アルバイトは「バイト用」の設備（麺茹で機・洗い場・コンロ・まな板・トッピング台など）でしか調理・洗い物をしないので、建築モードの「🧑‍🍳バイト用」で買うか、置いてある設備を「バイト専用にする」。レジ・冷蔵庫・食器棚・受け渡し台はみんなで共用。閉店後はアルバイトもスープを冷蔵庫にしまってくれる'],
+      ['🧑‍🍳', 'Lv.3 からアルバイトを雇える（パソコン）。調理・接客・洗い場・おまかせ の仕事をまかせられる。アルバイトは「バイト用」の設備（麺茹で機・洗い場・コンロ・まな板・トッピング台など）でしか調理・洗い物をしないので、パソコンの「🛠️ 設備」の「バイト用で買う」か建築モードの「🧑‍🍳バイト用」で買うか、置いてある設備を「バイト専用にする」。レジ・冷蔵庫・食器棚・受け渡し台はみんなで共用。閉店後はアルバイトもスープを冷蔵庫にしまってくれる'],
       ['👥', 'ルームを作ると最大4人で一緒にお店を回せます。麺茹で・盛り付け・配膳・洗い物を分担しよう'],
       ['🔨', '建築ボタン（B）で麺茹で機・洗い場・コンロ（寸胴鍋つき）・作業台・冷蔵庫・テーブル席・カウンターなどを買って、好きな場所に置ける。置いてある設備は狙って「🔧動かす」（F）'],
       ['🏆', 'ランキングの「💰 総利益」は、毎日の利益（賭場の勝ち負けも含む）の合計です'], ['🎥', 'Vキー／設定で一人称と三人称を切り替え'],
